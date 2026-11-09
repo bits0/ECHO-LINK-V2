@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node tests/run_all_probes.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0"
   }
 }
