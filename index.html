@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ECHO//LINK — Chapter 1: The Inventory</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== TITLE SCREEN ===== -->
+  <div id="title-screen" class="screen">
+    <div class="title-grid-bg"></div>
+    <div class="title-core">
+      <div class="title-mark">◉</div>
+      <h1 class="title-logo">ECHO<span class="title-slashes">//</span>LINK</h1>
+      <div class="title-chapter">CHAPTER 1 — THE INVENTORY</div>
+      <div class="title-tag">A network is a conversation. Something is listening.</div>
+      <div class="title-actions">
+        <button id="btn-lab" class="btn btn-primary">MECHANICS LAB</button>
+        <button id="btn-start" class="btn" disabled title="Story mode is paused while we polish the lab">STORY MODE — PAUSED</button>
+        <button id="btn-continue" class="btn" disabled>CONTINUE</button>
+      </div>
+      <div class="title-foot">
+        <span id="title-mute" class="title-opt">SOUND: ON</span>
+        <span id="title-settings" class="title-opt">SETTINGS</span>
+        <span class="title-dim">headphones recommended · saves locally in your browser</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== GAME SCREEN ===== -->
+  <div id="game-screen" class="screen hidden">
+    <!-- first-person scene viewport -->
+    <div id="viewport">
+      <div id="scene-layers"></div>
+      <div id="hotspot-label" class="hidden"></div>
+      <div id="transition-veil"></div>
+    </div>
+
+    <!-- current objective -->
+    <div id="objective-bar" class="hidden">
+      <span class="obj-pip">◈</span><span id="objective-text"></span>
+    </div>
+
+    <!-- location breadcrumb -->
+    <div id="location-bar"></div>
+
+    <!-- amber hint dot -->
+    <div id="amber-dot" class="hidden" title="Hint">
+      <div class="amber-pulse"></div>
+    </div>
+    <div id="hint-card" class="hidden">
+      <div class="hint-head">◈ FIELD NOTE</div>
+      <div id="hint-text"></div>
+      <div class="hint-nav">
+        <button id="hint-more" class="btn btn-tiny">MORE</button>
+        <button id="hint-close" class="btn btn-tiny">CLOSE</button>
+      </div>
+    </div>
+
+    <!-- phone -->
+    <div id="phone-button">
+      <div class="phone-icon">▯</div>
+      <div id="phone-badge" class="hidden"></div>
+    </div>
+    <div id="phone-overlay" class="hidden">
+      <div id="phone-frame">
+        <div class="phone-top"><span id="phone-clock">21:47</span><span class="phone-net">LTE ▂▄▆</span></div>
+        <div class="phone-tabs">
+          <button class="phone-tab active" data-tab="jobs">BFREE</button>
+          <button class="phone-tab" data-tab="chat">CHAT</button>
+          <button class="phone-tab" data-tab="mail">MAIL</button>
+          <button class="phone-tab" data-tab="log">LOG</button>
+        </div>
+        <div id="phone-content"></div>
+        <button id="phone-close" class="btn btn-tiny">PUT AWAY</button>
+      </div>
+    </div>
+
+    <!-- device close-up overlay -->
+    <div id="device-overlay" class="hidden"></div>
+
+    <!-- PC-C desktop overlay -->
+    <div id="desktop-overlay" class="hidden"></div>
+
+    <!-- full-view Network Space -->
+    <div id="netspace-overlay" class="hidden"></div>
+
+    <!-- pause -->
+    <div id="pause-overlay" class="hidden">
+      <div class="pause-card">
+        <div class="pause-title">⏸ PAUSED</div>
+        <button id="pause-resume" class="btn btn-primary">RESUME</button>
+        <button id="pause-mute" class="btn">SOUND: ON</button>
+        <button id="pause-restart" class="btn">RESTART CHAPTER</button>
+        <button id="pause-quit" class="btn">QUIT TO TITLE</button>
+      </div>
+    </div>
+
+    <!-- toast -->
+    <div id="toast" class="hidden"></div>
+
+    <!-- chapter end -->
+    <div id="end-overlay" class="hidden">
+      <div class="end-card">
+        <div class="end-mark">◉</div>
+        <div class="end-title">CHAPTER 1 COMPLETE</div>
+        <div class="end-sub">The Inventory</div>
+        <div id="end-stats"></div>
+        <div class="end-quote">"Tomorrow, we look at the servers." — UNKNOWN</div>
+        <button id="end-restart" class="btn btn-primary">PLAY AGAIN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings — shared across title and game screens -->
+  <div id="settings-overlay" class="hidden">
+    <div class="settings-card">
+      <div class="settings-title">SETTINGS</div>
+      <label class="settings-row">
+        <input type="checkbox" id="set-ns-remember">
+        <span>Remember Network Space view<small>Keep pan &amp; zoom between visits</small></span>
+      </label>
+      <div class="settings-actions"><button class="btn" id="settings-close">CLOSE</button></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
