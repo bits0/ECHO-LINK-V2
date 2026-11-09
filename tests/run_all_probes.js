@@ -47,7 +47,7 @@ for (const probe of probes) {
   // an inherited NODE_TEST_CONTEXT makes the nested test runner swallow failures
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
-  const r = spawnSync(process.execPath, ["--test", probe], { cwd: repo, stdio: "inherit", env });
+  const r = spawnSync(process.execPath, ["--test", probe], { cwd: repo, stdio: "inherit", env, timeout: 180000 });
   if (r.error) { failed++; console.error(`FAIL ${name} — spawn error: ${r.error.message}`); }
   else if (r.status !== 0) { failed++; console.error(`FAIL ${name} — exit ${r.status}`); }
   else console.log(`PASS ${name}`);

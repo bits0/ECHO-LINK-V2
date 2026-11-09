@@ -56,8 +56,9 @@ test("boot smoke", async () => {
 
   const server = await startServer();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;
-  const browser = await chromium.launch({ headless: true });
+  let browser;
   try {
+    browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
     const pageErrors = [], consoleMsgs = [];
     page.on("pageerror", e => pageErrors.push(`[pageerror] ${e.message}`));
@@ -110,7 +111,7 @@ test("boot smoke", async () => {
     await page.click("#title-settings");
     assert.equal(await page.locator("#set-ns-remember").isChecked(), false, "persisted setting must survive a reload");
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
     server.close();
   }
 });
