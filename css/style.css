@@ -315,18 +315,26 @@ button{font-family:inherit;cursor:pointer}
   background:rgba(10,13,17,.78);backdrop-filter:blur(10px);box-shadow:0 16px 50px rgba(0,0,0,.42);
 }
 .dock-item{
-  min-width:116px;background:rgba(18,21,27,.82);border:1px solid var(--line);border-radius:9px;
+  min-width:124px;background:rgba(18,21,27,.82);border:1px solid var(--line);border-radius:9px;
   color:var(--ink);font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
   padding:9px 13px;display:flex;align-items:center;justify-content:center;gap:8px;position:relative;
   transition:all .15s ease;
 }
-.dock-item span{font-size:15px;color:var(--ink-dim)}
+.dock-item span{font-size:15px;color:var(--ink-dim);width:16px;text-align:center;flex:none}
 .dock-item:hover{border-color:var(--ink);color:var(--white);transform:translateY(-2px)}
 .dock-item:hover span{color:var(--white)}
+.dock-item:focus-visible{outline:1px solid var(--amber);outline-offset:2px}
 .dock-primary{border-color:var(--amber-dim);color:var(--amber)}
 .dock-primary span{color:var(--amber)}
+.dock-item.is-active{border-color:var(--amber);color:var(--white)}
+.dock-item.is-active span{color:var(--amber)}
+.dock-item.is-open:not(.is-active){border-color:var(--line-hi);color:var(--ink-dim)}
+.dock-item.is-open:not(.is-active)::before{
+  content:"";width:5px;height:5px;border-radius:50%;background:var(--ink-dim);flex:none;
+}
+.desk-dock{gap:12px}
 .dock-item b{
-  position:absolute;top:-8px;right:-8px;background:var(--amber);color:#100c04;
+  position:absolute;top:-6px;right:-6px;background:var(--amber);color:#100c04;
   font-family:var(--mono);font-size:8px;border-radius:8px;padding:2px 6px;
 }
 

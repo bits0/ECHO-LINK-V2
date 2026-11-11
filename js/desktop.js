@@ -78,9 +78,29 @@ export function closeDesktop(opts = {}) {
   if (back) openNetspace(ctx);
 }
 
+// Dock state is derived from the windows themselves: open = the window
+// exists, active = the open window on top. View state, never kept in S.
+function syncDock() {
+  let active = null, top = -Infinity;
+  for (const app of ["terminal", "browser"]) {
+    const win = el("win-" + app);
+    if (!win) continue;
+    const z = Number(win.style.zIndex) || 0;
+    if (z > top) { top = z; active = app; }
+  }
+  for (const app of ["terminal", "browser"]) {
+    const item = el("dock-" + app);
+    if (!item) continue;
+    item.classList.toggle("is-open", !!el("win-" + app));
+    item.classList.toggle("is-active", app === active);
+    if (app === active) item.setAttribute("aria-current", "true");
+    else item.removeAttribute("aria-current");
+  }
+}
+
 function spawnWindow(app) {
   const body = el("desk-body");
-  if (el("win-"+app)) { el("win-"+app).style.zIndex = ++zTop; return; }
+  if (el("win-"+app)) { el("win-"+app).style.zIndex = ++zTop; syncDock(); return; }
 
   const win = document.createElement("div");
   win.className = "win workspace-win";
@@ -100,9 +120,10 @@ function spawnWindow(app) {
     </div>
     <div class="win-body"></div>`;
   body.appendChild(win);
+  syncDock();
 
-  win.addEventListener("mousedown", () => { win.style.zIndex = ++zTop; });
-  win.querySelector(".wb-close").onclick = () => { sfx.click(); win.remove(); };
+  win.addEventListener("mousedown", () => { win.style.zIndex = ++zTop; syncDock(); });
+  win.querySelector(".wb-close").onclick = () => { sfx.click(); win.remove(); syncDock(); };
 
   const bar = win.querySelector(".win-bar");
   bar.addEventListener("mousedown", e => {

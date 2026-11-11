@@ -52,9 +52,17 @@ test("browser window — the page is whatever the network answers", async () => 
     await page.click("#dv-use");
     await page.waitForSelector("#dock-browser");
 
+    // (a) nothing is open yet
+    assert.equal(await page.locator(".dock-item.is-open, .dock-item.is-active").count(), 0, "(a) the dock starts clean");
+
     await page.click("#dock-browser");
     await page.waitForSelector("#win-browser");
     assert.equal(await page.locator("#dock-terminal").count(), 1, "the dock keeps TERMINAL beside BROWSER");
+    // (b) opening the browser marks it open and active, and only it
+    assert.equal(await page.locator("#dock-browser.is-open").count(), 1, "(b) browser is open");
+    assert.equal(await page.locator("#dock-browser.is-active").count(), 1, "(b) browser is active");
+    assert.equal(await page.locator("#dock-browser").getAttribute("aria-current"), "true", "(b) the active item exposes aria-current");
+    assert.equal(await page.locator("#dock-terminal.is-open, #dock-terminal.is-active").count(), 0, "(b) terminal stays clean");
     assert.match(await txt(page.locator("#win-browser .browser-page")), /NEW TAB/, "the window opens on a start page");
 
     // the router's page, rendered from the live engine
@@ -74,10 +82,28 @@ test("browser window — the page is whatever the network answers", async () => 
     assert.match(after, /ERR_NAME_NOT_RESOLVED/);
     assert.equal(await page.locator("#win-browser .browser-err").count(), 1, "the error code is visible in .browser-err");
 
+    // (c) focusing the terminal keeps the browser open
+    await page.click("#dock-terminal");
+    await page.waitForSelector("#win-terminal");
+    assert.equal(await page.locator("#dock-terminal.is-active").count(), 1, "(c) terminal is active");
+    assert.equal(await page.locator("#dock-terminal").getAttribute("aria-current"), "true", "(c) aria-current moves to the terminal");
+    assert.equal(await page.locator("#dock-browser.is-open").count(), 1, "(c) the browser stays open");
+    assert.equal(await page.locator("#dock-browser.is-active").count(), 0, "(c) the browser is no longer active");
+    assert.equal(await page.locator("#dock-browser").getAttribute("aria-current"), null, "(c) aria-current leaves the browser");
+    assert.equal(await page.locator(".dock-item.is-active").count(), 1, "(c) exactly one item is active");
+
+    // (d) closing the terminal clears it; the browser is still open
+    await page.click("#win-terminal .wb-close");
+    await page.waitForSelector("#win-terminal", { state: "detached" });
+    assert.equal(await page.locator("#dock-terminal.is-open, #dock-terminal.is-active").count(), 0, "(d) the closed terminal is clean");
+    assert.equal(await page.locator("#dock-browser.is-open").count(), 1, "(d) the browser is still open");
+
+    // (e) closing the browser clears the last open marker
     await page.click("#win-browser .wb-close");
     await page.waitForSelector("#win-browser", { state: "detached" });
+    assert.equal(await page.locator(".dock-item.is-open").count(), 0, "(e) no window is open");
 
-    // the dock still works after the window closes
+    // the dock still works after the windows close
     await page.click("#dock-terminal");
     await page.waitForSelector(".term-input");
     await page.fill(".term-input", "ipconfig");
