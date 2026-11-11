@@ -313,3 +313,90 @@ test("help lists every device in the roster", () => {
   const out = text(net.helpText());
   for (const name of Object.keys(S.devices)) assert.ok(out.includes(name), `missing ${name}`);
 });
+
+// ---------- browser engine: what a URL returns, derived from state ----------
+function webCases() {
+  const out = [];
+  boot("story"); powerBackbone();
+  out.push(net.webRequest("PC-C", "http://192.168.1.1"));
+  out.push(net.webRequest("PC-C", "192.168.1.1"));
+  S.devices["RTR-01"].power = false;
+  out.push(net.webRequest("PC-C", "192.168.1.1"));
+  boot("story"); powerBackbone();
+  out.push(net.webRequest("PC-C", "kb.aster.local"));
+  out.push(net.webRequest("PC-C", "pc-a.aster.local"));
+  out.push(net.webRequest("PC-C", "192.168.1.10"));
+  boot("lab"); powerBackbone();
+  out.push(net.webRequest("PC-C", "192.168.1.13"));
+  S.cabling.cables["C-SPARE-1"].a = "PP-07:jack";
+  S.cabling.cables["C-SPARE-1"].b = "CSW-01:p05";
+  out.push(net.webRequest("PC-C", "192.168.1.13"));
+  return out;
+}
+
+test("router admin page comes back over IP while the network is up", () => {
+  boot("story");
+  powerBackbone();
+  const r = net.webRequest("PC-C", "http://192.168.1.1");
+  assert.equal(r.ok, true);
+  assert.equal(r.error, null);
+  assert.deepEqual(Object.keys(r).sort(), ["error", "lines", "ok", "title", "url"]);
+  assert.equal(r.title, "ASTER EDGE — RTR-01");
+  const out = text(r.lines);
+  assert.match(out, /RTR-01/);
+  assert.match(out, /LAN1/);
+  // leases list only devices the network can actually observe: PC-C, nobody else
+  assert.match(out, /^Clients: PC-C$/m);
+});
+
+test("a bare address works the same as a schemed one", () => {
+  boot("story");
+  powerBackbone();
+  const bare = net.webRequest("PC-C", "192.168.1.1");
+  const schemed = net.webRequest("PC-C", "http://192.168.1.1/status");
+  assert.equal(bare.ok, true);
+  assert.equal(schemed.ok, true);
+  assert.equal(bare.title, schemed.title);
+});
+
+test("router powered off: the same URL times out", () => {
+  boot("story");
+  powerBackbone();
+  S.devices["RTR-01"].power = false;
+  assert.equal(net.webRequest("PC-C", "192.168.1.1").error, "ERR_CONNECTION_TIMED_OUT");
+});
+
+test("an unknown name does not resolve", () => {
+  boot("story");
+  powerBackbone();
+  assert.equal(net.webRequest("PC-C", "kb.aster.local").error, "ERR_NAME_NOT_RESOLVED");
+});
+
+test("PC-A's name was never registered in DNS", () => {
+  boot("story");
+  powerBackbone();
+  assert.equal(net.webRequest("PC-C", "pc-a.aster.local").error, "ERR_NAME_NOT_RESOLVED");
+});
+
+test("a reachable host with no web service refuses the connection", () => {
+  boot("story");
+  powerBackbone();
+  const r = net.webRequest("PC-C", "192.168.1.10");
+  assert.equal(r.ok, false);
+  assert.equal(r.error, "ERR_CONNECTION_REFUSED");
+  assert.match(text(r.lines), /Nothing is listening on port 80\./);
+});
+
+test("seating a lead changes PC-D from unreachable to a refused connection", () => {
+  boot("lab");
+  powerBackbone();
+  assert.equal(net.webRequest("PC-C", "192.168.1.13").error, "ERR_CONNECTION_TIMED_OUT");
+  S.cabling.cables["C-SPARE-1"].a = "PP-07:jack";
+  S.cabling.cables["C-SPARE-1"].b = "CSW-01:p05";
+  assert.equal(net.webRequest("PC-C", "192.168.1.13").error, "ERR_CONNECTION_REFUSED");
+});
+
+test("browser results never leak the walls", () => {
+  for (const r of webCases())
+    assert.doesNotMatch(JSON.stringify(r), /PP-\d|OF-\d|printed|hidden run/i);
+});

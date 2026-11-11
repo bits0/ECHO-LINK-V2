@@ -108,15 +108,20 @@ export function deviceOnline(name) {
 export function routerUp()   { return S.devices[activeScenario.router].power; }
 export function switchUp()   { return S.devices[activeScenario.switch].power; }
 
-// can the player's machine reach this device at IP level?
+// can this machine reach a device at IP level?
 // (same-segment only unless the scenario enables inter-VLAN routing)
-export function reachableFromPCC(name) {
+export function reachableFrom(source, name) {
   if (!routerUp() || !switchUp()) return false;      // no powered network gear, nothing moves
-  if (!deviceOnline(activeScenario.player)) return false; // our own machine needs a live path too
+  if (!deviceOnline(source)) return false;           // the source needs a live path too
   const d = S.devices[name];
   if (!d) return false;
   if (!activeScenario.reachesVlan(effectiveVlan(name))) return false; // other segment: unreachable
   return deviceOnline(name);
+}
+
+// the player's machine, pinned for existing callers
+export function reachableFromPCC(name) {
+  return reachableFrom(activeScenario.player, name);
 }
 
 // name resolution: router DNS only knows DHCP clients that registered
@@ -349,4 +354,66 @@ export function helpText() {
     { text:"", cls:"" },
     { text:`Devices you know about: ${Object.keys(S.devices).join("  ")}`, cls:"t-dim" },
   ];
+}
+
+// ---------- browser engine: what a URL returns, derived from state ----------
+// A browser is a client: it can only ask its own resolvability, the route,
+// and whatever listens on the far side. Path and port are ignored in this
+// chapter — any path on a host reaches that host's page (or fails the same
+// way), and port 80 is the only service modelled.
+const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+
+function webFail(error, url, text) {
+  return { ok:false, url, title:"Cannot reach this page", lines:[{ text, cls:"t-amber" }], error };
+}
+
+export function webRequest(source, rawUrl) {
+  const raw = String(rawUrl || "").trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : "http://" + raw;
+  let u;
+  try { u = new URL(withScheme); }
+  catch {
+    return { ok:false, url:raw, title:"Enter an address",
+             lines:[{ text:"Type a host name or IP address, then press Enter.", cls:"" }],
+             error:"ERR_INVALID_URL" };
+  }
+  const url = u.href, host = u.hostname.toLowerCase();
+
+  // Host lookup. An IP literal matches a device's address; a name matches a
+  // device after the scenario's DNS suffix (and an FQDN trailing dot) is gone.
+  let dev;
+  if (IPV4.test(host)) {
+    dev = Object.values(S.devices).find(d => d.ip === host);
+    if (!dev) return webFail("ERR_CONNECTION_TIMED_OUT", url, "The connection timed out.");
+  } else {
+    const suffix = "." + activeScenario.dnsSuffix.toLowerCase();
+    let name = host.endsWith(".") ? host.slice(0, -1) : host;
+    if (name.endsWith(suffix)) name = name.slice(0, -suffix.length);
+    dev = Object.values(S.devices).find(d => d.name.toLowerCase() === name);
+    if (!dev) return webFail("ERR_NAME_NOT_RESOLVED", url, "The host name could not be resolved.");
+    // a name is only usable when the router's DNS actually knows it (PC-A's lesson)
+    if (!resolvesName(dev.name)) return webFail("ERR_NAME_NOT_RESOLVED", url, "The host name could not be resolved.");
+  }
+
+  if (!reachableFrom(source, dev.name)) return webFail("ERR_CONNECTION_TIMED_OUT", url, "The connection timed out.");
+
+  // Only the scenario's router listens on port 80; everything else refuses.
+  if (dev.name !== activeScenario.router)
+    return webFail("ERR_CONNECTION_REFUSED", url, "Nothing is listening on port 80.");
+
+  // Router admin page, built from live state — its address comes from the
+  // roster, never from the scenario's advertised gateway.
+  const lan1 = routerInterfaces().find(p => p.id === "LAN1");
+  const clients = Object.values(S.devices).filter(d => d.dhcp && deviceOnline(d.name)).map(d => d.name);
+  return {
+    ok:true, url, title:"ASTER EDGE — " + dev.name, error:null,
+    lines:[
+      { text:`Router: ${dev.name}`, cls:"t-white" },
+      { text:`Address: ${dev.ip}`, cls:"" },
+      { text:`LAN1: ${lan1.text} · VLAN ${lan1.vlan}`, cls:"" },
+      { text:`DHCP: on · ${clients.length} lease(s)`, cls:"" },
+      { text:`DNS suffix: ${activeScenario.dnsSuffix}`, cls:"" },
+      { text:`Clients: ${clients.join(", ") || "none"}`, cls:"" },
+    ],
+  };
 }
