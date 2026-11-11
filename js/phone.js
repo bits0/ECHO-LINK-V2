@@ -10,6 +10,7 @@ export function initPhone(c) { ctx = c; }
 
 const el = id => document.getElementById(id);
 let activeTab = "jobs";
+const inLab = () => !!S.mechanicsMode;
 
 // ---------- public API used by story ----------
 export function addChatMsg(from, text) {
@@ -68,6 +69,17 @@ function checkItem(done, active, text) {
   return `<li class="${done ? "done" : active ? "active" : ""}">${text}</li>`;
 }
 function jobsHTML() {
+  if (inLab()) {
+    const total = Object.keys(S.devices).length;
+    return `<div class="job-card">
+      <div class="job-id">MECHANICS LAB</div>
+      <div class="job-title">Sandbox — no contract</div>
+      <div style="font-size:12.5px;color:var(--ink);line-height:1.6;margin-bottom:8px">
+        No client, no deadline, no pay. Inspect, power, cable, verify.
+      </div>
+      <div class="job-pay">RECORDED ${S.inventoried.length}/${total} · POWERED ${S.poweredOn.length}/${total}</div>
+    </div>`;
+  }
   const inv = ["SRV-01","SRV-02","CSW-01","RTR-01"].filter(d=>S.inventoried.includes(d)).length;
   const pow = ["SRV-01","SRV-02","CSW-01","RTR-01"].filter(d=>S.poweredOn.includes(d)).length;
   const pcs = ["PC-A","PC-B","PC-C","PC-D"].filter(d=>S.inventoried.includes(d)).length;
@@ -116,6 +128,9 @@ function jobsHTML() {
 
 // ================= CHAT =================
 function chatHTML() {
+  if (inLab()) {
+    return `<div class="chat-sys" style="margin-top:30px">NO CONVERSATIONS<br/><br/>narrative link disabled in the lab.</div>`;
+  }
   const log = S.chatLog || [];
   if (!log.length) {
     return `<div class="chat-sys" style="margin-top:30px">NO CONVERSATIONS<br/><br/>your clients usually email.</div>`;
@@ -160,6 +175,7 @@ const MAILS = {
   },
 };
 function mailListHTML() {
+  if (inLab()) return `<div class="chat-sys" style="margin-top:30px">NO MAIL<br/><br/>the lab has no inbox.</div>`;
   if (!S.mail.length) return `<div class="chat-sys" style="margin-top:30px">NO MAIL</div>`;
   let h = "";
   for (const id of [...S.mail].reverse()) {
@@ -231,6 +247,13 @@ function openKB() {
 
 // ================= LOG =================
 function logHTML() {
+  if (inLab()) {
+    return `<div style="font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--ink-dim);padding:6px 4px 10px">MISSION LOG — MECHANICS LAB</div>
+      <div class="log-item active">
+        <div class="log-title">MECHANICS LAB — inspect, power, cable, verify</div>
+        <div class="log-sub">Story objectives belong to Story Mode.</div>
+      </div>`;
+  }
   let h = `<div style="font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--ink-dim);padding:6px 4px 10px">MISSION LOG — CHAPTER 1</div>`;
   for (const o of OBJECTIVES) {
     const done = objectiveDone(o.id);

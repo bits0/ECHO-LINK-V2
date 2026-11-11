@@ -98,7 +98,36 @@ test("boot smoke", async () => {
     const objective = await page.locator("#objective-text").textContent();
     assert.ok(objective.startsWith("MECHANICS LAB"), `objective text was ${JSON.stringify(objective)}`);
     assert.equal(await hidden(page, "amber-dot"), true);
-    assert.equal(await hidden(page, "phone-button"), true);
+    assert.equal(await hidden(page, "phone-button"), false, "the lab keeps the phone button");
+
+    // the lab phone speaks lab, not story
+    await page.click("#phone-button");
+    assert.equal(await hidden(page, "phone-overlay"), false);
+    const jobs = await page.locator("#phone-content").innerText();
+    assert.ok(jobs.includes("Sandbox — no contract"), `lab jobs card was ${JSON.stringify(jobs)}`);
+    assert.ok(jobs.includes("MECHANICS LAB"), "lab jobs card names the lab");
+    assert.match(jobs, /RECORDED \d+\/\d+ · POWERED \d+\/\d+/, "the counts line is live state");
+    assert.ok(!jobs.includes("BF-1042") && !jobs.includes("ACCEPT JOB"), "story job must not leak into the lab");
+
+    await page.click('.phone-tab[data-tab="log"]');
+    const log = await page.locator("#phone-content").innerText();
+    assert.ok(log.includes("Story objectives belong to Story Mode."), "lab log points back at Story Mode");
+    assert.ok(!log.includes("Inventory & power on the Server Room equipment"), "story missions must not leak into the lab");
+
+    await page.click('.phone-tab[data-tab="chat"]');
+    const chat = await page.locator("#phone-content").innerText();
+    assert.ok(chat.includes("narrative link disabled in the lab."), "lab chat is disabled");
+    assert.ok(!chat.includes("UNKNOWN"), "no story thread in the lab");
+
+    await page.click('.phone-tab[data-tab="mail"]');
+    assert.ok((await page.locator("#phone-content").innerText()).includes("the lab has no inbox."), "lab mail is empty");
+
+    await page.click("#phone-close");
+    assert.equal(await hidden(page, "phone-overlay"), true);
+    await page.keyboard.press("Tab");
+    assert.equal(await hidden(page, "phone-overlay"), false, "Tab opens the phone in the lab");
+    await page.keyboard.press("Escape");
+    assert.equal(await hidden(page, "phone-overlay"), true);
 
     await boot();
     await page.click("#title-settings");

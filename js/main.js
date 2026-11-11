@@ -194,7 +194,7 @@ el("pause-quit").onclick = () => { save(); location.reload(); };
 // ---------------- keyboard ----------------
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-  if (e.key === "Tab") { e.preventDefault(); if (!paused && !S.mechanicsMode) togglePhone(); }
+  if (e.key === "Tab") { e.preventDefault(); if (!paused) togglePhone(); }
   if (e.key === "Escape") {
     if (cableInHand()) { dropHand(); return; }   // a connector in hand is dropped first
     if (!el("phone-overlay").classList.contains("hidden")) { closePhone(); return; }
@@ -247,7 +247,7 @@ function startGame(fresh, mechanics=false) {
   el("title-screen").classList.add("hidden");
   el("game-screen").classList.remove("hidden");
   el("amber-dot").classList.toggle("hidden", S.mechanicsMode);
-  el("phone-button").classList.toggle("hidden", S.mechanicsMode);
+  el("phone-button").classList.remove("hidden");
   el("pause-restart").textContent = S.mechanicsMode ? "RESTART LAB" : "RESTART CHAPTER";
   el("pause-mute").textContent = "SOUND: " + (S.muted ? "OFF" : "ON");
   el("title-mute").textContent = "SOUND: " + (S.muted ? "OFF" : "ON");
