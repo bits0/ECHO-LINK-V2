@@ -298,7 +298,7 @@ export function ping(target, source = activeScenario.player) {
 
   const hostVlan = host ? effectiveVlan(host.name) : null;
   const ok = host && canReach(hostVlan) && deviceOnline(host.name);
-  const noRoute = host && !canReach(hostVlan);
+  const noRoute = host && hostVlan !== null && !canReach(hostVlan);
 
   if (ok) {
     let reply = 0;
@@ -313,7 +313,7 @@ export function ping(target, source = activeScenario.player) {
     lines.push({ text:`Ping statistics for ${ip}:`, cls:"" });
     lines.push({ text:`    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss),`, cls:"t-dim" });
   } else {
-    // same subnet, device not answering (NIC down / cable out / off)
+    // same segment and silent (NIC down / cable out / off), or no path to the target's segment at all
     for (let i=0;i<4;i++) lines.push({ text:`Reply from ${selfIp}: Destination host unreachable.`, cls:"t-dim", delay: 900 });
     lines.push({ text:`Ping statistics for ${ip}:`, cls:"" });
     lines.push({ text:`    Packets: Sent = 4, Received = 0, Lost = 4 (100% loss),`, cls:"t-dim" });

@@ -187,12 +187,22 @@ test("ping: other-segment server has no route (times out)", () => {
   assert.match(out, /Request timed out/);
 });
 
-test("ping: lab PC-D (seated cable, broken run) times out", () => {
+test("ping: lab PC-D (seated cable, broken run) is unreachable, not a timeout", () => {
   boot("lab");
   powerBackbone();
   const out = text(net.ping("PC-D"));
-  assert.match(out, /Request timed out/);
+  assert.match(out, /Destination host unreachable/);
   assert.match(out, /100% loss/);
+  assert.doesNotMatch(out, /Request timed out/);
+});
+
+test("ping: unplugging PC-A's desk cable flips the message, not the name", () => {
+  boot("story");
+  powerBackbone();
+  S.cabling.cables["C-PCA"].a = null;
+  const out = text(net.ping("192.168.1.10"));
+  assert.match(out, /Destination host unreachable/);
+  assert.doesNotMatch(out, /Request timed out/);
 });
 
 test("ping: general failure when the player's own link is down", () => {
