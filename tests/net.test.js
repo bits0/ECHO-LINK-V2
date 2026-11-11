@@ -64,6 +64,39 @@ test("lab scenario derives from story and swaps the hidden runs", () => {
   assert.deepEqual(Object.keys(S.devices), Object.keys(CHAPTER1.devices()));
 });
 
+// Rename only the role fields and roster entries; cabling addresses stay authored.
+function rolesRenamed(patch) {
+  const base = CHAPTER1;
+  return { ...base, ...patch, devices() {
+    const d = base.devices();
+    for (const [key, name] of [["switch","CORE-9"],["router","EDGE-9"]])
+      if (patch[key] === name) { d[name] = { ...d[base[key]], name }; delete d[base[key]]; }
+    return d;
+  } };
+}
+
+test("switch interfaces follow the scenario's switch name", () => {
+  setScenario(rolesRenamed({ switch: "CORE-9" }));
+  resetState();
+  S.started = true;
+  setupCabling();
+  S.devices["CORE-9"].power = true;
+  const p1 = net.switchInterfaces().find(p => p.pid === "p01");
+  assert.equal(p1.target, null);          // old code still reports PC-A here
+  assert.match(p1.medium, /vacant/);
+});
+
+test("router interfaces follow the scenario's router name", () => {
+  setScenario(rolesRenamed({ router: "EDGE-9" }));
+  resetState();
+  S.started = true;
+  setupCabling();
+  S.devices["EDGE-9"].power = true;
+  const lan1 = net.routerInterfaces().find(p => p.id === "LAN1");
+  assert.equal(lan1.target, null);        // old code still finds the uplink
+  assert.equal(lan1.text, "EMPTY");
+});
+
 // ---------- physical path tracing ----------
 test("tracePC finds a complete path when every segment is present", () => {
   boot("story");

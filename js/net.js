@@ -162,13 +162,13 @@ function remotePCState(pc) {
 
 // what is actually beyond a switch port, traced through panel + runs
 function traceFromSwitchPort(pid) {
-  const conn = cableAt("CSW-01:" + pid);
+  const conn = cableAt(activeScenario.switch + ":" + pid);
   if (!conn) return null;
   const c = conn.cable;
   const other = c[conn.end === "a" ? "b" : "a"];
   if (!other) return { kind:"dangling", cableId:conn.id };
   const [owner] = other.split(":");
-  if (owner === "RTR-01") return { kind:"uplink", device:"RTR-01" };
+  if (owner === activeScenario.router) return { kind:"uplink", device: activeScenario.router };
   if (owner.startsWith("SRV-")) return { kind:"server", device:owner };
   if (owner.startsWith("PP-")) {
     const jack = owner;
@@ -190,7 +190,7 @@ function traceFromSwitchPort(pid) {
 }
 
 export function switchInterfaces() {
-  const sw = endpoint("CSW-01");
+  const sw = endpoint(activeScenario.switch);
   return Array.from({length:24},(_,i)=>{
     const n=i+1, pid="p"+String(n).padStart(2,"0"), id="SW-"+String(n).padStart(2,"0");
     const vlan = switchPortVlan(pid);
@@ -200,10 +200,10 @@ export function switchInterfaces() {
     if (t.kind === "dangling")
       return { id, label:"P"+String(n).padStart(2,"0"), pid, target:null, vlan, medium:"lead seated — far end loose", state:"fault", text:"NO CARRIER", cls:"st-amber", speed:"—" };
     if (t.kind === "uplink") {
-      const st = endpoint("RTR-01").power
+      const st = endpoint(activeScenario.router).power
         ? { state:"active", text:"LINK UP", cls:"st-good", speed:"1G" }
         : { state:"fault", text:"REMOTE OFF", cls:"st-amber", speed:"—" };
-      return { id, label:"P"+String(n).padStart(2,"0"), pid, target:"RTR-01", vlan, medium:"router uplink", ...st };
+      return { id, label:"P"+String(n).padStart(2,"0"), pid, target: activeScenario.router, vlan, medium:"router uplink", ...st };
     }
     if (t.kind === "server") {
       const st = endpoint(t.device).power
@@ -228,24 +228,24 @@ export function switchInterfaces() {
 }
 
 export function routerInterfaces() {
-  const powered = !!endpoint("RTR-01")?.power;
-  const up = cableAt("RTR-01:lan1");
+  const powered = !!endpoint(activeScenario.router)?.power;
+  const up = cableAt(activeScenario.router + ":lan1");
   const upFar = up ? up.cable[up.end === "a" ? "b" : "a"] : null;
-  const upToSwitch = !!(upFar && upFar.startsWith("CSW-01:"));
+  const upToSwitch = !!(upFar && upFar.startsWith(activeScenario.switch + ":"));
   const lan1 = !powered
     ? { state:"down", text:"PORT DOWN", cls:"st-off", speed:"—" }
     : !up ? { state:"empty", text:"EMPTY", cls:"st-off", speed:"—" }
     : !upToSwitch ? { state:"fault", text:"NO CARRIER", cls:"st-amber", speed:"—" }
-    : endpoint("CSW-01").power ? { state:"active", text:"LINK UP", cls:"st-good", speed:"1G" }
+    : endpoint(activeScenario.switch).power ? { state:"active", text:"LINK UP", cls:"st-good", speed:"1G" }
     : { state:"fault", text:"REMOTE OFF", cls:"st-amber", speed:"—" };
   return [
     powered
       ? { id:"WAN", label:"WAN", port:null, target:null, vlan:"—", medium:"building uplink", state:"fault", text:"NO LINE", cls:"st-amber", speed:"—" }
       : { id:"WAN", label:"WAN", port:null, target:null, vlan:"—", medium:"building uplink", state:"down", text:"PORT DOWN", cls:"st-off", speed:"—" },
-    { id:"LAN1", label:"LAN1", port:"RTR-01:lan1", target:upToSwitch ? "CSW-01" : null, vlan:10, medium:"switch uplink", ...lan1 },
-    ...[2,3,4].map(n => ({ id:"LAN"+n, label:"LAN"+n, port:"RTR-01:lan"+n, target:null, vlan:10, medium:"vacant",
+    { id:"LAN1", label:"LAN1", port: activeScenario.router + ":lan1", target: upToSwitch ? activeScenario.switch : null, vlan:10, medium:"switch uplink", ...lan1 },
+    ...[2,3,4].map(n => ({ id:"LAN"+n, label:"LAN"+n, port: activeScenario.router + ":lan"+n, target:null, vlan:10, medium:"vacant",
         ...(!powered ? { state:"down", text:"PORT DOWN", cls:"st-off", speed:"—" }
-          : cableAt("RTR-01:lan"+n) ? { state:"fault", text:"NO CARRIER", cls:"st-amber", speed:"—" }
+          : cableAt(activeScenario.router + ":lan"+n) ? { state:"fault", text:"NO CARRIER", cls:"st-amber", speed:"—" }
           : { state:"empty", text:"EMPTY", cls:"st-off", speed:"—" }) })),
     { id:"MGMT", label:"MGMT", port:null, target:null, vlan:"—", medium:"local management", state:"down", text:"DISABLED", cls:"st-off", speed:"—" },
   ];
