@@ -365,6 +365,40 @@ button{font-family:inherit;cursor:pointer}
   font-family:var(--mono);font-size:12.5px;flex:1;padding:0;margin-left:6px;caret-color:var(--amber);
 }
 
+/* browser window — a client view of whatever the network answers */
+.browser{position:absolute;inset:0;display:flex;flex-direction:column;background:#07090c}
+.browser-bar{
+  display:flex;gap:8px;padding:9px 10px;border-bottom:1px solid var(--line);
+  background:var(--panel);flex:none;
+}
+.browser-url{
+  flex:1;background:rgba(18,21,27,.82);border:1px solid var(--line);border-radius:6px;
+  outline:none;color:var(--white);font-family:var(--mono);font-size:11.5px;
+  padding:6px 9px;caret-color:var(--amber);
+}
+.browser-url:focus{border-color:var(--line-hi)}
+.browser-url::placeholder{color:var(--ink-faint)}
+.browser-go{
+  background:rgba(18,21,27,.82);border:1px solid var(--line);border-radius:6px;
+  color:var(--ink);font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+  padding:0 12px;cursor:pointer;transition:all .15s ease;
+}
+.browser-go:hover{border-color:var(--ink);color:var(--white)}
+.browser-page{
+  flex:1;overflow-y:auto;padding:16px 18px;font-family:var(--mono);font-size:12.5px;
+  line-height:1.55;color:#b6bfca;scrollbar-width:thin;scrollbar-color:var(--line) transparent;
+}
+.browser-title{font-size:15px;letter-spacing:.18em;color:var(--white);margin-bottom:12px}
+.browser-page .t-line{white-space:pre-wrap;word-break:break-all}
+.browser-page .t-dim{color:var(--ink-dim)}
+.browser-page .t-amber{color:var(--amber)}
+.browser-page .t-green{color:var(--green)}
+.browser-page .t-white{color:var(--white)}
+.browser-err{
+  margin-top:12px;padding-top:10px;border-top:1px solid var(--line);
+  color:var(--amber);letter-spacing:.08em;word-break:break-all;
+}
+
 /* device console (switch / router CLI) — same .term body, titled frame */
 .cli-frame{
   width:min(880px,92vw);height:min(560px,82vh);display:flex;flex-direction:column;

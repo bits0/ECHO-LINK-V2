@@ -1,0 +1,92 @@
+// ============================================================
+// ECHO//LINK — the browser window: pages are what the network answers.
+// Boots the lab, opens PC-C's desktop, and drives the address bar.
+// ============================================================
+import test from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
+
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml" };
+
+function startServer() {
+  const server = http.createServer(async (req, res) => {
+    const { pathname } = new URL(req.url, "http://127.0.0.1");
+    if (pathname === "/favicon.ico") { res.writeHead(204).end(); return; }
+    const file = path.resolve(repo, "." + decodeURIComponent(pathname === "/" ? "/index.html" : pathname));
+    if (!file.startsWith(repo + path.sep)) { res.writeHead(403).end(); return; }
+    try {
+      const body = await readFile(file);
+      res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream" }).end(body);
+    } catch { res.writeHead(404).end(); }
+  });
+  return new Promise(resolve => server.listen(0, "127.0.0.1", () => resolve(server)));
+}
+
+const txt = async loc => (await loc.innerText()).replace(/\s+/g, " ").trim();
+
+test("browser window — the page is whatever the network answers", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+
+    await page.goto(url);
+    await page.click("#btn-lab");
+    await page.waitForSelector("#game-screen:not(.hidden)");
+    await page.click('[data-hs="door:office"]');
+    await page.waitForSelector('[data-hs="device:PC-C"]');
+    await page.click('[data-hs="device:PC-C"]');
+    await page.click("#dv-use");
+    await page.waitForSelector("#dock-browser");
+
+    await page.click("#dock-browser");
+    await page.waitForSelector("#win-browser");
+    assert.equal(await page.locator("#dock-terminal").count(), 1, "the dock keeps TERMINAL beside BROWSER");
+    assert.match(await txt(page.locator("#win-browser .browser-page")), /NEW TAB/, "the window opens on a start page");
+
+    // the router's page, rendered from the live engine
+    await page.fill("#win-browser .browser-url", "192.168.1.1");
+    await page.press("#win-browser .browser-url", "Enter");
+    await page.waitForFunction(() => {
+      const t = document.querySelector("#win-browser .browser-page")?.textContent || "";
+      return t.includes("ASTER EDGE") && t.includes("RTR-01");
+    }, null, { timeout: 10000 });
+
+    // an honest DNS failure replaces the page — it is not appended
+    await page.fill("#win-browser .browser-url", "kb.aster.local");
+    await page.press("#win-browser .browser-url", "Enter");
+    await page.waitForFunction(() => (document.querySelector("#win-browser .browser-page")?.textContent || "").includes("ERR_NAME_NOT_RESOLVED"), null, { timeout: 10000 });
+    const after = await txt(page.locator("#win-browser .browser-page"));
+    assert.ok(!after.includes("ASTER EDGE"), "the second page must replace the first");
+    assert.match(after, /ERR_NAME_NOT_RESOLVED/);
+    assert.equal(await page.locator("#win-browser .browser-err").count(), 1, "the error code is visible in .browser-err");
+
+    await page.click("#win-browser .wb-close");
+    await page.waitForSelector("#win-browser", { state: "detached" });
+
+    // the dock still works after the window closes
+    await page.click("#dock-terminal");
+    await page.waitForSelector(".term-input");
+    await page.fill(".term-input", "ipconfig");
+    await page.press(".term-input", "Enter");
+    await page.waitForSelector('.term-out:has-text("IPv4 Address")');
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
