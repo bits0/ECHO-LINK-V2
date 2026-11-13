@@ -17,6 +17,7 @@ let nsMode = "virtual";            // "virtual" | "physical" — persists across
 let physView = "floor";            // "floor" | "building"
 let previewFloor = null;           // a preview sheet: shell and racks, nothing wired
 let selectedFacilityFloor = null;  // facility floor drawn amber in the building
+let facZoom = 1;                   // building zoom: scales the iso projection only
 
 const el = id => document.getElementById(id);
 
@@ -619,13 +620,52 @@ function facilityCardsHTML() {
     </button>`).join("");
 }
 
-// ---- the facility map: iso slabs only, all text stays in the DOM ----
+// interiors live at sheet coordinates; the plate is the frame they are mapped into
+function drawSheetInterior(g, sheet, z, iso, HW, HD) {
+  const walls = sheet.walls || [];
+  if (!walls.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x1, y1, x2, y2] of walls) {
+    minX = Math.min(minX, x1, x2); maxX = Math.max(maxX, x1, x2);
+    minY = Math.min(minY, y1, y2); maxY = Math.max(maxY, y1, y2);
+  }
+  if (!(maxX > minX) || !(maxY > minY)) return;
+  const U = x => -HW + ((x - minX) / (maxX - minX)) * 2 * HW;
+  const V = y => -HD + ((y - minY) / (maxY - minY)) * 2 * HD;
+
+  g.setLineDash([]);
+  g.strokeStyle = "rgba(136,155,175,.55)"; g.lineWidth = 1;
+  g.beginPath();
+  for (const [x1, y1, x2, y2] of walls) {
+    const a = iso(U(x1), V(y1), z), b = iso(U(x2), V(y2), z);
+    g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+  }
+  g.stroke();
+
+  g.fillStyle = "rgba(154,164,178,.40)"; g.strokeStyle = "rgba(154,164,178,.60)";
+  for (const rack of sheet.racks || []) {
+    const quad = [[rack.x,rack.y],[rack.x+rack.w,rack.y],[rack.x+rack.w,rack.y+rack.h],[rack.x,rack.y+rack.h]]
+      .map(([x,y]) => iso(U(x), V(y), z));
+    g.beginPath();
+    quad.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
+    g.closePath(); g.fill(); g.stroke();
+  }
+}
+
+// ---- the facility map: iso slabs, interiors only where a sheet exists ----
 function drawFacilityBuilding(g, W, H) {
   planHot = [];
-  const floors = FACILITY.floors, GAP = 4.4, HW = 14, HD = 4;
-  const s = Math.max(4, Math.min(26, Math.min((W - 420) / 40, (H - 240) / 34)));
+  const floors = FACILITY.floors, GAP = 4.4, HW = 14, HD = 4, TH = 1.2;
+  const s = Math.max(4, Math.min(26, Math.min((W - 420) / 40, (H - 240) / 34))) * facZoom;
   const ox = W / 2, oy = H / 2 - 6.6 * s;
   const iso = (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) / 2 - z) * s });
+  const quad = (pts, fill) => {
+    g.beginPath();
+    pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
+    g.closePath();
+    if (fill) { g.fillStyle = fill; g.fill(); }
+    g.stroke();
+  };
   g.globalAlpha = 1;
 
   // ground plane line, one gap below the lowest slab
@@ -635,26 +675,38 @@ function drawFacilityBuilding(g, W, H) {
 
   // plates, top of the stack first: L0 at the top, L3 at the bottom
   floors.forEach((f, i) => {
-    const pts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, -GAP * i));
-    const selected = f.id === selectedFacilityFloor, sheet = !!f.sheet;
-    g.beginPath();
-    pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
-    g.closePath();
-    g.fillStyle = selected ? "rgba(224,161,62,.10)" : sheet ? "rgba(32,40,51,.55)" : "rgba(20,25,32,.38)";
-    g.fill();
+    const z = -GAP * i, sheet = !!f.sheet, selected = f.id === selectedFacilityFloor;
+    const topPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z));
+    const botPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z - TH));
+    const sideX = [topPts[1], topPts[2], botPts[2], botPts[1]];   // +x face
+    const sideY = [topPts[2], topPts[3], botPts[3], botPts[2]];   // +y face
     g.setLineDash(sheet ? [] : [5, 5]);
     g.lineWidth = selected ? 1.8 : sheet ? 1.5 : 1;
     g.strokeStyle = selected ? "rgba(224,161,62,.9)" : sheet ? "rgba(154,164,178,.75)" : "rgba(154,164,178,.28)";
-    g.stroke(); g.setLineDash([]);
+    const sideFill = selected ? "rgba(120,86,24,.30)" : sheet ? "rgba(12,16,22,.62)" : "rgba(9,12,16,.55)";
+    quad(sideX, sideFill); quad(sideY, sideFill);   // thickness, same stroke as the top
+    quad(topPts, selected ? "rgba(224,161,62,.10)" : sheet ? "rgba(32,40,51,.55)" : "rgba(20,25,32,.38)");
+    g.setLineDash([]);
   });
 
-  // slim core column through every board, drawn last so it reads through the plates
-  const top = iso(0, 0, 0), bot = iso(0, 0, -GAP * (floors.length - 1)), cw = 2.4 * s;
-  g.fillStyle = "rgba(154,164,178,.05)";
-  g.fillRect(ox - cw / 2, top.y, cw, bot.y - top.y);
-  g.strokeStyle = "rgba(154,164,178,.28)"; g.lineWidth = 1;
-  for (const cx of [ox - cw/2, ox + cw/2]) {
-    g.beginPath(); g.moveTo(cx, top.y); g.lineTo(cx, bot.y); g.stroke();
+  // the sheets' own interiors, over the stack so they stay legible —
+  // never the office's plan, never invented for a void floor
+  floors.forEach((f, i) => {
+    if (f.sheet) drawSheetInterior(g, f.sheet, -GAP * i, iso, HW, HD);
+  });
+
+  // slim core prism through every board, one node per level
+  const zBot = -GAP * (floors.length - 1) - TH, c = 1.2;
+  const coreX = [iso(c,-c,0), iso(c,c,0), iso(c,c,zBot), iso(c,-c,zBot)];
+  const coreY = [iso(c,c,0), iso(-c,c,0), iso(-c,c,zBot), iso(c,c,zBot)];
+  g.setLineDash([]); g.lineWidth = 1; g.strokeStyle = "rgba(154,164,178,.34)";
+  quad(coreX, "rgba(154,164,178,.06)");
+  quad(coreY, "rgba(154,164,178,.06)");
+  quad([iso(-c,-c,0), iso(c,-c,0), iso(c,c,0), iso(-c,c,0)], "rgba(30,38,48,.55)");
+  for (let i = 0; i < floors.length; i++) {
+    const r = 1.05, node = [[r,0],[0,r],[-r,0],[0,-r]].map(([x,y]) => iso(x, y, -GAP * i));
+    g.strokeStyle = "rgba(224,232,242,.85)";
+    quad(node, "rgba(210,220,232,.60)");
   }
 }
 
@@ -896,6 +948,7 @@ export function openNetspace(c) {
   previewFloor = null;   // every visit starts on the wired office floor
   physView = "floor";
   selectedFacilityFloor = null;
+  facZoom = 1;
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
@@ -1098,14 +1151,30 @@ export function openNetspace(c) {
   canvas.addEventListener("pointercancel", () => { drag=null; shell.classList.remove("ns-panning"); });
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
+    if (nsMode === "physical" && physView === "building") {
+      setFacZoom(facZoom * (e.deltaY < 0 ? 1.15 : 1/1.15));
+      return;
+    }
     const r=canvas.getBoundingClientRect();
     zoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY < 0 ? 1.15 : 1/1.15, canvas.clientWidth, canvas.clientHeight);
   }, { passive:false });
   canvas.addEventListener("mouseleave",()=>{hovered=null;hoveredPlan=null;tip.classList.add("hidden");});
 
-  ov.querySelector("#ns-zoom-in").onclick = () => zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1.3, canvas.clientWidth, canvas.clientHeight);
-  ov.querySelector("#ns-zoom-out").onclick = () => zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1/1.3, canvas.clientWidth, canvas.clientHeight);
+  const inBuilding = () => nsMode === "physical" && physView === "building";
+  function setFacZoom(z) {
+    facZoom = Math.max(0.6, Math.min(2.2, z));
+    canvas.dataset.faczoom = facZoom.toFixed(2);
+  }
+  ov.querySelector("#ns-zoom-in").onclick = () => {
+    if (inBuilding()) return setFacZoom(facZoom * 1.2);
+    zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1.3, canvas.clientWidth, canvas.clientHeight);
+  };
+  ov.querySelector("#ns-zoom-out").onclick = () => {
+    if (inBuilding()) return setFacZoom(facZoom / 1.2);
+    zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1/1.3, canvas.clientWidth, canvas.clientHeight);
+  };
   ov.querySelector("#ns-zoom-reset").onclick = () => {
+    if (inBuilding()) return setFacZoom(1);
     const W=canvas.clientWidth, H=canvas.clientHeight;
     Object.assign(acam(), nsMode === "physical" ? fitCamPlan(W,H) : fitCam(W,H));
   };
@@ -1135,12 +1204,12 @@ export function openNetspace(c) {
     viewToggle.textContent = building ? "BACK" : "FACILITY MAP";
     crumb.classList.toggle("hidden", nsMode !== "physical");
     facPanel.classList.toggle("hidden", !(nsMode === "physical" && building));
-    zoomBar.style.display = nsMode === "physical" && building ? "none" : "flex";
+    zoomBar.style.display = "flex";
     for (const card of facList.querySelectorAll(".fac-card"))
       card.classList.toggle("active", card.dataset.floor === selectedFacilityFloor);
   }
   const clearHover = () => { hovered = null; hoveredPlan = null; tip.classList.add("hidden"); planHot = []; };
-  function showBuilding() { physView = "building"; clearHover(); renderChrome(); }
+  function showBuilding() { physView = "building"; setFacZoom(1); clearHover(); renderChrome(); }
   function showOffice() {
     physView = "floor"; previewFloor = null; selectedFacilityFloor = null;
     clearHover();
@@ -1175,6 +1244,7 @@ export function openNetspace(c) {
   }
   mVirtual.onclick = () => setMode("virtual");
   mPhysical.onclick = () => setMode("physical");
+  setFacZoom(1);
   setMode(nsMode);
 
   ov.querySelector("#ns-open-terminal").onclick=()=>setTerminal(terminalPanel.classList.contains("hidden"));

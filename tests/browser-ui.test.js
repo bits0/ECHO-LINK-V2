@@ -233,6 +233,18 @@ test("facility map — four floors, one sheet, one breadcrumb", async () => {
     assert.match(buildingCrumb, /FACILITY MAP/);
     assert.match(await txt(page.locator("#ns-head-ctx")), /COMPLEX 09/);
 
+    // (b2) the building zooms, and the zoom reaches the drawing scale
+    assert.equal(await page.locator("#ns-zoom").evaluate(el => getComputedStyle(el).display), "flex", "the zoom bar is live in the building");
+    const facZoom = () => page.evaluate(() => document.querySelector("#netspace-canvas").dataset.faczoom);
+    assert.equal(await facZoom(), "1.00", "the building opens at zoom 1");
+    await page.click("#ns-zoom-in");
+    await page.click("#ns-zoom-in");
+    assert.equal(await facZoom(), "1.44", "two clicks step the zoom");
+    for (let i = 0; i < 10; i++) await page.click("#ns-zoom-in");
+    assert.equal(await facZoom(), "2.20", "zoom is clamped at 2.2");
+    await page.click("#ns-zoom-reset");
+    assert.equal(await facZoom(), "1.00", "reset returns to 1");
+
     // (c) four cards; only the surveyed floor can be opened
     assert.equal(await page.locator("#ns-fac .fac-card").count(), 4);
     assert.equal(await page.locator("#fac-l1").evaluate(el => el.disabled), false, "L1 card is enabled");
