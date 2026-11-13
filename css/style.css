@@ -438,6 +438,10 @@ button{font-family:inherit;cursor:pointer}
 .ns3d-live{display:flex;align-items:center;gap:8px}
 .ns3d-live i{width:6px;height:6px;border-radius:50%;background:var(--ink-dim);animation:nsLive 2.4s ease-in-out infinite}
 .ns3d-modes{display:flex;gap:6px;pointer-events:auto}
+.ns3d-floors{
+  position:absolute;top:58px;left:50%;transform:translateX(-50%);
+  display:flex;gap:6px;pointer-events:auto;
+}
 .ns-mode{
   background:rgba(7,9,12,.62);border:1px solid var(--line);border-radius:5px;
   color:var(--ink-dim);font-family:var(--mono);font-size:9px;letter-spacing:.2em;

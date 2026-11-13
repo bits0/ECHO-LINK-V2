@@ -212,6 +212,54 @@ export const CHAPTER1_LAB = {
   cabling: chapter1LabCabling,
 };
 
+// ---------- preview sheets: floors with no scenario behind them yet ----------
+// A sheet that exists on the drawing board but not in the plant: walls, rooms
+// and racks only. No devices, outlets, taps or panel — nothing here is wired,
+// so nothing here can answer.
+export const PREVIEW_FLOORS = [
+  {
+    id: "l1",
+    label: "L1 — NOC",
+    floorplan: {
+      title: "LEVEL 1 — NOC & IT OPERATIONS",
+      // 4:1 plate, 960 x 240 world units
+      walls: [
+        [-480,-120, 480,-120], [ -480, 120, 480, 120],
+        [-480,-120, -480, 120], [ 480,-120, 480, 120],
+        // corridor ceiling (y=70), door gaps for NOC, IT ops, airlock, lift
+        [-480, 70, -230, 70], [-170, 70,  -40, 70],
+        [ -40, 70,  100, 70], [ 160, 70,  240, 70],
+        [ 240, 70,  280, 70], [ 320, 70,  400, 70], [ 440, 70, 480, 70],
+        [ -40,-120,  -40, 70],                        // NOC | IT operations
+        [ 240,-120,  240, 70],                        // IT operations | VoIP / airlock
+        [ 240, -20,  320,-20], [ 356,-20,  360,-20],  // VoIP PBX enclosure
+        [ 360,-120,  360, 70],                        // VoIP / airlock | lift
+      ],
+      doors: [
+        { hx:-170, hy: 70, r:60, a0:Math.PI, a1:Math.PI*1.5 },
+        { hx: 160, hy: 70, r:60, a0:Math.PI, a1:Math.PI*1.5 },
+        { hx: 320, hy: 70, r:40, a0:Math.PI, a1:Math.PI*1.5 },
+        { hx: 440, hy: 70, r:40, a0:Math.PI, a1:Math.PI*1.5 },
+        { hx: 356, hy:-20, r:36, a0:Math.PI, a1:Math.PI*1.5 },
+      ],
+      labels: [
+        { text:"NOC — CONTROL ROOM", x:-456, y:-92 },
+        { text:"IT OPERATIONS", x:-26, y:-92 },
+        { text:"VOIP PBX", x:250, y:-98 },
+        { text:"AIRLOCK", x:250, y:54 },
+        { text:"ELEVATOR / STAIRWELL", x:420, y:-25, rot:-Math.PI/2, align:"center" },
+        { text:"CORRIDOR", x:-456, y:100 },
+      ],
+      racks: [
+        { id:"mdf", label:"MDF · CORE SWITCH", x: -10, y:-40, w:120, h:36 },
+        { id:"ops", label:"IT-OPS RACK A",      x: 120, y:-40, w:110, h:36 },
+        { id:"pbx", label:"VOIP PBX",            x: 246, y:-56, w: 66, h:30 },
+      ],
+      riser: { x: 520, y: 10, label: "FIBER RISER · L0 / L3" },
+    },
+  },
+];
+
 // Registry of authored scenarios. Add new entries here as they are built.
 export const SCENARIOS = {
   [CHAPTER1.id]: CHAPTER1,

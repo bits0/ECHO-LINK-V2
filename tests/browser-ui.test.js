@@ -189,3 +189,67 @@ test("device inspector — the virtual and physical halves of the panel", async 
     server.close();
   }
 });
+
+test("floor strip — L1 is a sheet, not the office", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+
+    await page.goto(url);
+    await page.click("#btn-lab");
+    await page.waitForSelector("#game-screen:not(.hidden)");
+    await page.click('[data-hs="door:office"]');
+    await page.waitForSelector('[data-hs="device:PC-C"]');
+    await page.click('[data-hs="device:PC-C"]');
+    await page.click("#dv-use");
+    await page.waitForSelector("#dock-netspace");
+    await page.click("#dock-netspace");
+    await page.waitForSelector("#ns-mode-physical");
+
+    // virtual is a topology, not a floor plan — no floor strip there
+    assert.equal(await page.locator("#ns-floors.hidden").count(), 1, "VIRTUAL shows no floor strip");
+
+    await page.click("#ns-mode-physical");
+    await page.waitForSelector("#ns-floors:not(.hidden)");
+    assert.equal(await txt(page.locator("#ns-floor-f1")), "F1 — OFFICE");
+    assert.equal(await txt(page.locator("#ns-floor-l1")), "L1 — NOC");
+    assert.equal(await page.locator("#ns-floor-f1.on").count(), 1, "F1 is the floor on arrival");
+    await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
+
+    // the unwired floor prints a sheet and says so
+    await page.click("#ns-floor-l1");
+    await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PREVIEW"), null, { timeout: 10000 });
+    assert.equal(
+      await txt(page.locator("#ns-readout")),
+      "PREVIEW — LEVEL 1 — NOC & IT OPERATIONS · SHEET ONLY · NO DEVICES LOADED"
+    );
+    assert.equal(await page.locator("#ns-floor-l1.on").count(), 1, "L1 is marked active");
+    assert.equal(await page.locator("#ns-floor-f1.on").count(), 0, "F1 is no longer active");
+    assert.ok(!/PC-A|SRV-01|OF-01/.test(await txt(page.locator("#netspace-overlay"))), "the preview sheet names no office device");
+
+    // nothing on a preview sheet is hot: a click opens no inspector
+    const box = await page.locator("#netspace-canvas").boundingBox();
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    assert.equal(await page.locator("#device-overlay:not(.hidden)").count(), 0, "a sheet with no devices opens nothing");
+    assert.equal(await page.locator("#ns-tip:not(.hidden)").count(), 0, "nothing on the sheet answers a hover");
+
+    // back to the wired floor
+    await page.click("#ns-floor-f1");
+    await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
+    assert.equal(await page.locator("#ns-floor-f1.on").count(), 1, "F1 is active again");
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});

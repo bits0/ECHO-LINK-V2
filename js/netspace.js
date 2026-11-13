@@ -5,7 +5,7 @@
 // The view informs, but only terminal ping verifies.
 // ============================================================
 import { S, getSettings } from "./state.js";
-import { activeScenario } from "./scenario.js";
+import { activeScenario, PREVIEW_FLOORS } from "./scenario.js";
 import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, routerUp } from "./net.js";
 import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
@@ -14,6 +14,7 @@ import { nodeIconImage } from "./icons.js";
 let ctx = null;
 let active = null;
 let nsMode = "virtual";            // "virtual" | "physical" — persists across opens
+let previewFloor = null;           // a preview sheet: shell and racks, nothing wired
 
 const el = id => document.getElementById(id);
 
@@ -552,16 +553,8 @@ function planTipFor(h) {
   return null;
 }
 
-function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
-  const C = S.cabling; if (!C) return;
-  const F = activeScenario.floorplan;
-  const z = acam().z;
-  planHot = [];
-  const chain = hoveredPlan ? planChainOf(hoveredPlan.kind, hoveredPlan.id) : null;
-  const dim = member => { g.globalAlpha = chain && !member ? .3 : 1; };
-  const P = (x, y) => w2s({x, y}, W, H);
-
-  // ---- the sheet itself: walls, doors, room labels (never dimmed) ----
+// ---- the sheet itself: walls, doors, room labels (never dimmed) ----
+function drawPlanSheet(g, P, z, F) {
   g.globalAlpha = 1;
   g.strokeStyle = "rgba(154,164,178,.75)"; g.lineWidth = 2.6; g.lineCap = "round";
   for (const [x1,y1,x2,y2] of F.walls) {
@@ -585,6 +578,49 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
     g.restore();
   }
   g.textAlign = "left";
+}
+
+// the riser bracket: where this sheet meets the vertical backbone
+function drawPlanRiser(g, P, z, F) {
+  const rs = F.riser; if (!rs) return;
+  const p = P(rs.x, rs.y);
+  g.globalAlpha = 1;
+  g.strokeStyle = "rgba(154,164,178,.55)"; g.lineWidth = 1.1;
+  g.beginPath(); g.moveTo(p.x, p.y-10*z); g.lineTo(p.x, p.y+10*z); g.stroke();
+  for (const yy of [p.y-10*z, p.y+10*z]) {
+    g.beginPath(); g.moveTo(p.x-4*z, yy); g.lineTo(p.x+4*z, yy); g.stroke();
+  }
+  g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
+  g.fillStyle = "rgba(93,111,132,.7)";
+  g.fillText(rs.label, p.x+10*z, p.y+3*z);
+}
+
+function drawPlanRack(g, P, z, rack) {
+  const r = P(rack.x, rack.y);
+  g.fillStyle = "rgba(24,30,38,.75)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.2;
+  g.beginPath(); g.roundRect(r.x, r.y, rack.w*z, rack.h*z, 4); g.fill(); g.stroke();
+  g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
+  g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rack.label, r.x, r.y-6*z);
+}
+
+function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
+  const C = S.cabling; if (!C) return;
+  const F = previewFloor || activeScenario.floorplan;
+  const z = acam().z;
+  planHot = [];
+  const chain = hoveredPlan ? planChainOf(hoveredPlan.kind, hoveredPlan.id) : null;
+  const dim = member => { g.globalAlpha = chain && !member ? .3 : 1; };
+  const P = (x, y) => w2s({x, y}, W, H);
+
+  drawPlanSheet(g, P, z, F);
+  drawPlanRiser(g, P, z, F);
+
+  // ---- a preview sheet: the printed plan, before anything is wired ----
+  if (previewFloor) {
+    for (const rack of F.racks) drawPlanRack(g, P, z, rack);
+    g.globalAlpha = 1;
+    return;
+  }
 
   // ---- the shared trunk: one conduit in the tray, always visible ----
   // Runs themselves stay hidden; this is only the tray they share.
@@ -674,12 +710,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   // Rack A (servers)
   dim(!chain || !chain.pc);   // servers never belong to a PC chain
   {
-    const rackA = F.racks.find(r => r.id === "A");
-    const r = P(rackA.x, rackA.y);
-    g.fillStyle = "rgba(24,30,38,.75)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.2;
-    g.beginPath(); g.roundRect(r.x, r.y, rackA.w*z, rackA.h*z, 4); g.fill(); g.stroke();
-    g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
-    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rackA.label, r.x, r.y-6*z);
+    drawPlanRack(g, P, z, F.racks.find(r => r.id === "A"));
     for (const srv of ["SRV-01","SRV-02"]) {
       const L = F.devices[srv], p = P(L.x, L.y);
       const v = byName[srv];
@@ -694,14 +725,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   }
   // Rack B (patch panel + switch)
   dim(true);
-  {
-    const rackB = F.racks.find(r => r.id === "B");
-    const r = P(rackB.x, rackB.y);
-    g.fillStyle = "rgba(24,30,38,.75)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.2;
-    g.beginPath(); g.roundRect(r.x, r.y, rackB.w*z, rackB.h*z, 4); g.fill(); g.stroke();
-    g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
-    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rackB.label, r.x, r.y-6*z);
-  }
+  drawPlanRack(g, P, z, F.racks.find(r => r.id === "B"));
   // panel jacks with continuity LEDs + patch leads to switch ports
   Object.keys(C.panel).sort().forEach((jack, i) => {
     const jx = F.jackX.start + i*F.jackX.step, p = P(jx, 260);
@@ -814,6 +838,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
 export function openNetspace(c) {
   ctx = c;
   closeNetspace(false);
+  previewFloor = null;   // every visit starts on the wired office floor
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
@@ -827,6 +852,10 @@ export function openNetspace(c) {
           <button class="ns-mode" id="ns-mode-physical">PHYSICAL</button>
         </div>
         <div class="ns3d-live">LIVE OBSERVATION <i></i></div>
+      </div>
+      <div class="ns3d-floors hidden" id="ns-floors">
+        <button class="ns-mode" id="ns-floor-f1">F1 — OFFICE</button>
+        <button class="ns-mode" id="ns-floor-l1">${PREVIEW_FLOORS[0].label}</button>
       </div>
       <div class="ns3d-note" id="ns-note">A VIEW, NOT THE WHOLE TRUTH · VERIFY BY PING</div>
       <div class="ns3d-readout" id="ns-readout"></div>
@@ -897,8 +926,12 @@ export function openNetspace(c) {
 
     let text;
     if (nsMode === "physical") {
-      const lit = S.cabling ? Object.keys(S.cabling.panel).filter(j=>runContinuity(j)).length : 0;
-      text = `PHYSICAL — ${lit}/8 PANEL LIGHTS ON · HOVER TO TRACE A RUN · CLICK TO INSPECT`;
+      if (previewFloor) {
+        text = `PREVIEW — ${previewFloor.title} · SHEET ONLY · NO DEVICES LOADED`;
+      } else {
+        const lit = S.cabling ? Object.keys(S.cabling.panel).filter(j=>runContinuity(j)).length : 0;
+        text = `PHYSICAL — ${lit}/8 PANEL LIGHTS ON · HOVER TO TRACE A RUN · CLICK TO INSPECT`;
+      }
     } else {
       const observed=view.filter(v=>v.provenance==="network-observed").length;
       const verifiedCount=[S.pcbVerified,S.pcdVerified,S.pcaIpPinged].filter(Boolean).length;
@@ -1021,7 +1054,22 @@ export function openNetspace(c) {
   }
   const note = ov.querySelector("#ns-note");
   const legend = ov.querySelector("#ns-legend");
+  const floors = ov.querySelector("#ns-floors");
+  const floorOffice = ov.querySelector("#ns-floor-f1"), floorL1 = ov.querySelector("#ns-floor-l1");
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
+  function chooseFloor(floor) {
+    previewFloor = floor;
+    floorOffice.classList.toggle("on", !floor);
+    floorL1.classList.toggle("on", !!floor);
+    hovered = null; hoveredPlan = null;
+    tip.classList.add("hidden");
+    planHot = [];
+    Object.assign(camP, fitCamPlan(canvas.clientWidth, canvas.clientHeight));
+  }
+  floorOffice.onclick = () => chooseFloor(null);
+  floorL1.onclick = () => chooseFloor(PREVIEW_FLOORS[0].floorplan);
+  floorOffice.classList.toggle("on", !previewFloor);
+  floorL1.classList.toggle("on", !!previewFloor);
   function setMode(m) {
     nsMode = m;
     hoveredLink = null;
@@ -1029,6 +1077,7 @@ export function openNetspace(c) {
     mVirtual.classList.toggle("on", m === "virtual");
     mPhysical.classList.toggle("on", m === "physical");
     legend.classList.toggle("hidden", m !== "virtual");
+    floors.classList.toggle("hidden", m !== "physical");
     zoomBar.style.display = "flex";
     canvas.classList.add("ns-can-pan");
     note.textContent = m === "physical"
