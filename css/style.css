@@ -438,10 +438,32 @@ button{font-family:inherit;cursor:pointer}
 .ns3d-live{display:flex;align-items:center;gap:8px}
 .ns3d-live i{width:6px;height:6px;border-radius:50%;background:var(--ink-dim);animation:nsLive 2.4s ease-in-out infinite}
 .ns3d-modes{display:flex;gap:6px;pointer-events:auto}
-.ns3d-floors{
-  position:absolute;top:58px;left:50%;transform:translateX(-50%);
-  display:flex;gap:6px;pointer-events:auto;
+.ns3d-head b{font-weight:400;color:inherit}
+.ns3d-crumb{
+  position:absolute;top:66px;left:22px;display:flex;align-items:center;gap:10px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.18em;color:var(--ink-dim);pointer-events:auto;
 }
+.ns3d-fac{
+  position:absolute;right:22px;top:66px;width:236px;display:flex;flex-direction:column;gap:7px;
+  font-family:var(--mono);pointer-events:auto;
+}
+.ns-fac-head{display:flex;flex-direction:column;gap:3px;padding:0 2px 5px;border-bottom:1px solid var(--line)}
+.ns-fac-head b{font-size:10px;letter-spacing:.2em;color:var(--white);font-weight:400}
+.ns-fac-head span{font-size:7.5px;letter-spacing:.14em;color:var(--ink-faint)}
+.fac-card{
+  display:grid;grid-template-columns:auto 1fr;gap:2px 9px;text-align:left;
+  background:rgba(7,9,12,.72);border:1px solid var(--line);border-radius:5px;
+  padding:8px 10px;color:var(--ink-dim);
+}
+.fac-card:hover:not(:disabled){border-color:var(--line-hi)}
+.fac-card.is-void{border-style:dashed;opacity:.6;cursor:default}
+.fac-card.active{border-color:var(--amber);box-shadow:0 0 10px rgba(224,161,62,.12)}
+.fac-id{font-size:8.5px;letter-spacing:.18em;color:var(--ink-faint)}
+.fac-card.active .fac-id{color:var(--amber)}
+.fac-name{font-size:9.5px;letter-spacing:.1em;color:var(--ink)}
+.fac-sub{grid-column:1 / -1;font-size:7.5px;letter-spacing:.04em;color:var(--ink-faint)}
+.fac-state{grid-column:1 / -1;font-size:7.5px;letter-spacing:.12em;color:var(--ink-dim)}
+.fac-card.is-void .fac-state{color:var(--amber-dim)}
 .ns-mode{
   background:rgba(7,9,12,.62);border:1px solid var(--line);border-radius:5px;
   color:var(--ink-dim);font-family:var(--mono);font-size:9px;letter-spacing:.2em;

@@ -190,7 +190,7 @@ test("device inspector — the virtual and physical halves of the panel", async 
   }
 });
 
-test("floor strip — L1 is a sheet, not the office", async () => {
+test("facility map — four floors, one sheet, one breadcrumb", async () => {
   const server = await startServer();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;
   let browser;
@@ -215,37 +215,57 @@ test("floor strip — L1 is a sheet, not the office", async () => {
     await page.click("#dock-netspace");
     await page.waitForSelector("#ns-mode-physical");
 
-    // virtual is a topology, not a floor plan — no floor strip there
-    assert.equal(await page.locator("#ns-floors.hidden").count(), 1, "VIRTUAL shows no floor strip");
+    // VIRTUAL mode still has no building controls
+    assert.equal(await page.locator("#ns-crumb.hidden").count(), 1, "VIRTUAL shows no breadcrumb");
+    assert.equal(await page.locator("#ns-fac.hidden").count(), 1, "VIRTUAL shows no floor cards");
 
+    // (a) physical opens on the office floor
     await page.click("#ns-mode-physical");
-    await page.waitForSelector("#ns-floors:not(.hidden)");
-    assert.equal(await txt(page.locator("#ns-floor-f1")), "F1 — OFFICE");
-    assert.equal(await txt(page.locator("#ns-floor-l1")), "L1 — NOC");
-    assert.equal(await page.locator("#ns-floor-f1.on").count(), 1, "F1 is the floor on arrival");
+    await page.waitForSelector("#ns-crumb:not(.hidden)");
+    assert.equal(await txt(page.locator("#ns-crumb-text")), "F1 — OFFICE");
+    assert.match(await txt(page.locator("#ns-head-ctx")), /F1 — OFFICE/);
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
 
-    // the unwired floor prints a sheet and says so
-    await page.click("#ns-floor-l1");
+    // (b) FACILITY MAP opens the building
+    await page.click("#ns-view-toggle");
+    await page.waitForFunction(() => (document.querySelector("#ns-crumb-text")?.textContent || "").includes("FACILITY MAP"), null, { timeout: 10000 });
+    const buildingCrumb = await txt(page.locator("#ns-crumb-text"));
+    assert.match(buildingCrumb, /FACILITY MAP/);
+    assert.match(await txt(page.locator("#ns-head-ctx")), /COMPLEX 09/);
+
+    // (c) four cards; only the surveyed floor can be opened
+    assert.equal(await page.locator("#ns-fac .fac-card").count(), 4);
+    assert.equal(await page.locator("#fac-l1").evaluate(el => el.disabled), false, "L1 card is enabled");
+    for (const id of ["l0", "l2", "l3"]) {
+      assert.equal(await page.locator(`#fac-${id}`).evaluate(el => el.disabled), true, `${id} card is disabled`);
+      assert.match(await txt(page.locator(`#fac-${id}`)), /NO SHEET — NOT SURVEYED/);
+    }
+
+    // (d) a card with no sheet cannot change the map
+    const before = await txt(page.locator("#ns-readout"));
+    await page.evaluate(() => document.querySelector('[data-floor="L2"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    assert.equal(await txt(page.locator("#ns-crumb-text")), buildingCrumb, "a void card leaves the building");
+    assert.match(await txt(page.locator("#ns-head-ctx")), /COMPLEX 09/);
+    assert.equal(await txt(page.locator("#ns-readout")), before, "a void card changes no readout");
+    assert.equal(await page.locator("#fac-l2.active").count(), 0);
+
+    // (e) the surveyed card opens its sheet
+    await page.click("#fac-l1");
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PREVIEW"), null, { timeout: 10000 });
-    assert.equal(
-      await txt(page.locator("#ns-readout")),
-      "PREVIEW — LEVEL 1 — NOC & IT OPERATIONS · SHEET ONLY · NO DEVICES LOADED"
-    );
-    assert.equal(await page.locator("#ns-floor-l1.on").count(), 1, "L1 is marked active");
-    assert.equal(await page.locator("#ns-floor-f1.on").count(), 0, "F1 is no longer active");
-    assert.ok(!/PC-A|SRV-01|OF-01/.test(await txt(page.locator("#netspace-overlay"))), "the preview sheet names no office device");
+    assert.equal(await txt(page.locator("#ns-crumb-text")), "L1 — NOC");
+    assert.match(await txt(page.locator("#ns-head-ctx")), /L1 — NOC/);
+    assert.equal(await page.locator("#fac-l1.active").count(), 1, "the open floor is marked active");
+    assert.equal(await page.locator("#ns-fac.hidden").count(), 1, "cards belong to the building");
 
-    // nothing on a preview sheet is hot: a click opens no inspector
-    const box = await page.locator("#netspace-canvas").boundingBox();
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    assert.equal(await page.locator("#device-overlay:not(.hidden)").count(), 0, "a sheet with no devices opens nothing");
-    assert.equal(await page.locator("#ns-tip:not(.hidden)").count(), 0, "nothing on the sheet answers a hover");
-
-    // back to the wired floor
-    await page.click("#ns-floor-f1");
+    // (f) back to the building, then back to the office
+    await page.click("#ns-view-toggle");
+    await page.waitForFunction(() => (document.querySelector("#ns-crumb-text")?.textContent || "").includes("FACILITY MAP"), null, { timeout: 10000 });
+    assert.equal(await page.locator("#fac-l1.active").count(), 1, "the surveyed floor stays marked");
+    assert.equal(await txt(page.locator("#ns-view-toggle")), "BACK");
+    await page.click("#ns-view-toggle");
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
-    assert.equal(await page.locator("#ns-floor-f1.on").count(), 1, "F1 is active again");
+    assert.equal(await txt(page.locator("#ns-crumb-text")), "F1 — OFFICE");
+    assert.match(await txt(page.locator("#ns-head-ctx")), /F1 — OFFICE/);
 
     assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
   } finally {

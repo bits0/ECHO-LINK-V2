@@ -5,7 +5,7 @@
 // The view informs, but only terminal ping verifies.
 // ============================================================
 import { S, getSettings } from "./state.js";
-import { activeScenario, PREVIEW_FLOORS } from "./scenario.js";
+import { activeScenario, PREVIEW_FLOORS, FACILITY } from "./scenario.js";
 import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, routerUp } from "./net.js";
 import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
@@ -14,7 +14,9 @@ import { nodeIconImage } from "./icons.js";
 let ctx = null;
 let active = null;
 let nsMode = "virtual";            // "virtual" | "physical" — persists across opens
+let physView = "floor";            // "floor" | "building"
 let previewFloor = null;           // a preview sheet: shell and racks, nothing wired
+let selectedFacilityFloor = null;  // facility floor drawn amber in the building
 
 const el = id => document.getElementById(id);
 
@@ -603,6 +605,59 @@ function drawPlanRack(g, P, z, rack) {
   g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rack.label, r.x, r.y-6*z);
 }
 
+function sheetLabel(floorplan) {
+  const sheet = PREVIEW_FLOORS.find(s => s.floorplan === floorplan);
+  return sheet ? sheet.label : "SHEET";
+}
+
+function facilityCardsHTML() {
+  return FACILITY.floors.map(f => `
+    <button class="fac-card${f.sheet ? "" : " is-void"}" id="fac-${f.id.toLowerCase()}" data-floor="${f.id}"${f.sheet ? "" : " disabled"}>
+      <span class="fac-id">${f.id}</span><span class="fac-name">${f.name}</span>
+      <span class="fac-sub">${f.sub}</span>
+      <span class="fac-state">${f.sheet ? "SHEET ON FILE" : "NO SHEET — NOT SURVEYED"}</span>
+    </button>`).join("");
+}
+
+// ---- the facility map: iso slabs only, all text stays in the DOM ----
+function drawFacilityBuilding(g, W, H) {
+  planHot = [];
+  const floors = FACILITY.floors, GAP = 4.4, HW = 14, HD = 4;
+  const s = Math.max(4, Math.min(26, Math.min((W - 420) / 40, (H - 240) / 34)));
+  const ox = W / 2, oy = H / 2 - 6.6 * s;
+  const iso = (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) / 2 - z) * s });
+  g.globalAlpha = 1;
+
+  // ground plane line, one gap below the lowest slab
+  const ga = iso(-21, 0, -GAP * floors.length), gb = iso(21, 0, -GAP * floors.length);
+  g.strokeStyle = "rgba(154,164,178,.16)"; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(ga.x, ga.y); g.lineTo(gb.x, gb.y); g.stroke();
+
+  // plates, top of the stack first: L0 at the top, L3 at the bottom
+  floors.forEach((f, i) => {
+    const pts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, -GAP * i));
+    const selected = f.id === selectedFacilityFloor, sheet = !!f.sheet;
+    g.beginPath();
+    pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
+    g.closePath();
+    g.fillStyle = selected ? "rgba(224,161,62,.10)" : sheet ? "rgba(32,40,51,.55)" : "rgba(20,25,32,.38)";
+    g.fill();
+    g.setLineDash(sheet ? [] : [5, 5]);
+    g.lineWidth = selected ? 1.8 : sheet ? 1.5 : 1;
+    g.strokeStyle = selected ? "rgba(224,161,62,.9)" : sheet ? "rgba(154,164,178,.75)" : "rgba(154,164,178,.28)";
+    g.stroke(); g.setLineDash([]);
+  });
+
+  // slim core column through every board, drawn last so it reads through the plates
+  const top = iso(0, 0, 0), bot = iso(0, 0, -GAP * (floors.length - 1)), cw = 2.4 * s;
+  g.fillStyle = "rgba(154,164,178,.05)";
+  g.fillRect(ox - cw / 2, top.y, cw, bot.y - top.y);
+  g.strokeStyle = "rgba(154,164,178,.28)"; g.lineWidth = 1;
+  for (const cx of [ox - cw/2, ox + cw/2]) {
+    g.beginPath(); g.moveTo(cx, top.y); g.lineTo(cx, bot.y); g.stroke();
+  }
+}
+
 function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   const C = S.cabling; if (!C) return;
   const F = previewFloor || activeScenario.floorplan;
@@ -839,6 +894,8 @@ export function openNetspace(c) {
   ctx = c;
   closeNetspace(false);
   previewFloor = null;   // every visit starts on the wired office floor
+  physView = "floor";
+  selectedFacilityFloor = null;
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
@@ -846,17 +903,21 @@ export function openNetspace(c) {
       <canvas id="netspace-canvas"></canvas>
       <div class="ns3d-vignette"></div>
       <div class="ns3d-head">
-        <div><span>NETWORK SPACE</span> / OFFICE SEGMENT</div>
+        <div id="ns-head-ctx"><span>NETWORK SPACE</span> / <b id="ns-head-seg">F1 — OFFICE</b></div>
         <div class="ns3d-modes">
           <button class="ns-mode" id="ns-mode-virtual">VIRTUAL</button>
           <button class="ns-mode" id="ns-mode-physical">PHYSICAL</button>
         </div>
         <div class="ns3d-live">LIVE OBSERVATION <i></i></div>
       </div>
-      <div class="ns3d-floors hidden" id="ns-floors">
-        <button class="ns-mode" id="ns-floor-f1">F1 — OFFICE</button>
-        <button class="ns-mode" id="ns-floor-l1">${PREVIEW_FLOORS[0].label}</button>
+      <div class="ns3d-crumb hidden" id="ns-crumb">
+        <span id="ns-crumb-text">F1 — OFFICE</span>
+        <button class="ns-mode" id="ns-view-toggle">FACILITY MAP</button>
       </div>
+      <aside class="ns3d-fac hidden" id="ns-fac">
+        <div class="ns-fac-head"><b>${FACILITY.title}</b><span>${FACILITY.subtitle}</span></div>
+        <div id="ns-fac-list">${facilityCardsHTML()}</div>
+      </aside>
       <div class="ns3d-note" id="ns-note">A VIEW, NOT THE WHOLE TRUTH · VERIFY BY PING</div>
       <div class="ns3d-readout" id="ns-readout"></div>
       <div class="ns3d-legend" id="ns-legend">${t2LegendHTML()}</div>
@@ -913,9 +974,10 @@ export function openNetspace(c) {
     const byName=Object.fromEntries(view.map(v=>[v.name,v]));
 
     if (nsMode === "physical") {
-      // the physical layer — the building sheet
+      // the physical layer — the building sheet, or the whole building
       t2Grid(g, W, H);
-      drawCablingPlan(g, W, H, time, byName, hoveredPlan);
+      if (physView === "building") drawFacilityBuilding(g, W, H);
+      else drawCablingPlan(g, W, H, time, byName, hoveredPlan);
     } else {
       // the logical layer — 2D blueprint topology
       t2Grid(g, W, H);
@@ -926,7 +988,10 @@ export function openNetspace(c) {
 
     let text;
     if (nsMode === "physical") {
-      if (previewFloor) {
+      if (physView === "building") {
+        const sheets = FACILITY.floors.filter(f => f.sheet).length;
+        text = `${FACILITY.title} — ${FACILITY.floors.length} FLOORS · ${sheets} SHEET ON FILE · SELECT A FLOOR`;
+      } else if (previewFloor) {
         text = `PREVIEW — ${previewFloor.title} · SHEET ONLY · NO DEVICES LOADED`;
       } else {
         const lit = S.cabling ? Object.keys(S.cabling.panel).filter(j=>runContinuity(j)).length : 0;
@@ -998,6 +1063,7 @@ export function openNetspace(c) {
   });
   canvas.addEventListener("pointermove", e => {
     if (drag) {
+      if (nsMode === "physical" && physView === "building") return;   // fixed projection
       const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
       drag.moved += Math.abs(dx)+Math.abs(dy);
       const c = acam();
@@ -1054,22 +1120,46 @@ export function openNetspace(c) {
   }
   const note = ov.querySelector("#ns-note");
   const legend = ov.querySelector("#ns-legend");
-  const floors = ov.querySelector("#ns-floors");
-  const floorOffice = ov.querySelector("#ns-floor-f1"), floorL1 = ov.querySelector("#ns-floor-l1");
+  const crumb = ov.querySelector("#ns-crumb"), crumbText = ov.querySelector("#ns-crumb-text");
+  const headSeg = ov.querySelector("#ns-head-seg");
+  const facPanel = ov.querySelector("#ns-fac"), facList = ov.querySelector("#ns-fac-list");
+  const viewToggle = ov.querySelector("#ns-view-toggle");
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
-  function chooseFloor(floor) {
-    previewFloor = floor;
-    floorOffice.classList.toggle("on", !floor);
-    floorL1.classList.toggle("on", !!floor);
-    hovered = null; hoveredPlan = null;
-    tip.classList.add("hidden");
-    planHot = [];
-    Object.assign(camP, fitCamPlan(canvas.clientWidth, canvas.clientHeight));
+
+  function renderChrome() {
+    const building = physView === "building";
+    const ctx = building ? `${FACILITY.title} · FACILITY MAP`
+                         : previewFloor ? sheetLabel(previewFloor) : "F1 — OFFICE";
+    crumbText.textContent = ctx;
+    headSeg.textContent = nsMode === "physical" ? ctx : "OFFICE SEGMENT";
+    viewToggle.textContent = building ? "BACK" : "FACILITY MAP";
+    crumb.classList.toggle("hidden", nsMode !== "physical");
+    facPanel.classList.toggle("hidden", !(nsMode === "physical" && building));
+    zoomBar.style.display = nsMode === "physical" && building ? "none" : "flex";
+    for (const card of facList.querySelectorAll(".fac-card"))
+      card.classList.toggle("active", card.dataset.floor === selectedFacilityFloor);
   }
-  floorOffice.onclick = () => chooseFloor(null);
-  floorL1.onclick = () => chooseFloor(PREVIEW_FLOORS[0].floorplan);
-  floorOffice.classList.toggle("on", !previewFloor);
-  floorL1.classList.toggle("on", !!previewFloor);
+  const clearHover = () => { hovered = null; hoveredPlan = null; tip.classList.add("hidden"); planHot = []; };
+  function showBuilding() { physView = "building"; clearHover(); renderChrome(); }
+  function showOffice() {
+    physView = "floor"; previewFloor = null; selectedFacilityFloor = null;
+    clearHover();
+    Object.assign(camP, fitCamPlan(canvas.clientWidth, canvas.clientHeight));
+    renderChrome();
+  }
+  function showFacilityFloor(floor) {
+    physView = "floor"; previewFloor = floor.sheet; selectedFacilityFloor = floor.id;
+    clearHover();
+    Object.assign(camP, fitCamPlan(canvas.clientWidth, canvas.clientHeight));
+    renderChrome();
+  }
+  viewToggle.onclick = () => (physView === "building" ? showOffice() : showBuilding());
+  facList.addEventListener("click", e => {
+    const card = e.target.closest(".fac-card");
+    const floor = card && FACILITY.floors.find(f => f.id === card.dataset.floor);
+    if (!floor || !floor.sheet) return;   // no sheet, no journey
+    showFacilityFloor(floor);
+  });
   function setMode(m) {
     nsMode = m;
     hoveredLink = null;
@@ -1077,12 +1167,11 @@ export function openNetspace(c) {
     mVirtual.classList.toggle("on", m === "virtual");
     mPhysical.classList.toggle("on", m === "physical");
     legend.classList.toggle("hidden", m !== "virtual");
-    floors.classList.toggle("hidden", m !== "physical");
-    zoomBar.style.display = "flex";
     canvas.classList.add("ns-can-pan");
     note.textContent = m === "physical"
       ? "PHYSICAL MODE — THE PHYSICAL PLANT · DASHED = IN THE WALLS · HOVER TO TRACE A RUN"
       : "A VIEW, NOT THE WHOLE TRUTH · VERIFY BY PING";
+    renderChrome();
   }
   mVirtual.onclick = () => setMode("virtual");
   mPhysical.onclick = () => setMode("physical");

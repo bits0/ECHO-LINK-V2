@@ -260,6 +260,20 @@ export const PREVIEW_FLOORS = [
   },
 ];
 
+// The building around the sheets. Floors without a sheet are unsurveyed:
+// nothing may be invented for them.
+export const FACILITY = {
+  id: "complex09",
+  title: "COMPLEX 09",
+  subtitle: "RESEARCH & OPERATIONS FACILITY",
+  floors: [
+    { id:"L0", name:"SURFACE & ADMIN",         sub:"Gate · Reception · HR · Finance · IDF", sheet:null },
+    { id:"L1", name:"NOC & IT OPERATIONS",     sub:"Network Operations Center · PBX · Syslog/AD", sheet:PREVIEW_FLOORS[0].floorplan },
+    { id:"L2", name:"R&D & BIO-LABS",          sub:"Bio-Labs · Cleanroom · IoT · HVAC", sheet:null },
+    { id:"L3", name:"MAIN DATA CENTER & CORE", sub:"Core Network · Compute · SAN/NAS · Cooling", sheet:null },
+  ],
+};
+
 // Registry of authored scenarios. Add new entries here as they are built.
 export const SCENARIOS = {
   [CHAPTER1.id]: CHAPTER1,
