@@ -18,8 +18,8 @@ const el = id => document.getElementById(id);
 
 // ---------- cable tool: the end currently in hand ----------
 let hand = null;                    // { cableId, end: "a" | "b" }
-let currentView = null;             // { kind:"device"|"panel"|"outlet", name, selected }
-let currentOrigin = null;           // "netspace-traffic" when opened from the topology map
+let currentView = null;             // { kind:"device"|"panel"|"outlet", name, selected, view }
+let currentOrigin = null;           // "netspace" when opened from the topology map
 const selectedPorts = {};
 
 export function cableInHand() { return hand; }
@@ -122,7 +122,7 @@ function rerender() {
   if (!currentView) return;
   if (currentView.kind === "panel") openPatchPanel(currentView.selected);
   else if (currentView.kind === "outlet") openOutlet(currentView.name);
-  else openDevice(currentView.name, currentView.selected);
+  else openDevice(currentView.name, { selectedPort: currentView.selected, view: currentView.view || null });
 }
 
 function pickUp(cableId, end) {
@@ -251,7 +251,7 @@ function visualDefs() {
 }
 
 // ---------------- PC workstation ----------------
-function pcVisual(name) {
+function pcVisual(name, view) {
   const d = S.devices[name];
   const cid = pcCableId(name), c = cable(cid);
   const seatedA = c.a === name + ":nic";
@@ -313,7 +313,7 @@ function pcVisual(name) {
     ${seatedA
       ? `<path d="M 415 288 C 415 350 342 372 278 406 S 164 420 92 408" stroke="${link?"#79c98d":"#6b7484"}" stroke-width="3" fill="none" opacity=".82" ${seatedB?"":'stroke-dasharray="6 5"'}/>
          <path d="M 415 288 C 415 350 342 372 278 406" stroke="#e8ebef" stroke-width=".7" fill="none" opacity=".2"/>
-         <text x="168" y="431" text-anchor="middle" font-size="9" fill="#5b6472">${seatedB ? "ETHERNET · WALL OUTLET " + c.b.split(":")[0] : "ETHERNET · WALL END NOT IN AN OUTLET"}</text>`
+         <text x="168" y="431" text-anchor="middle" font-size="9" fill="#5b6472">${view === "virtual" ? "ETHERNET · SOFTWARE INTERFACE" : seatedB ? "ETHERNET · WALL OUTLET " + c.b.split(":")[0] : "ETHERNET · WALL END NOT IN AN OUTLET"}</text>`
       : `<path d="M 415 288 C 415 310 406 320 394 329" stroke="#3a4250" stroke-width="2" fill="none" stroke-dasharray="4 5"/>`}
     ${looseNodes}
     ${seatedA && c.b ? plugNode(cid, "b", 92, 408, "") : ""}
@@ -579,28 +579,46 @@ function observation(name, d) {
   return "Dust on the desk, except where someone recently moved the mouse.";
 }
 
-function deviceRows(name, d) {
+function deviceRows(name, d, view) {
   if (name === "CSW-01") {
     const ifs=switchInterfaces(), active=ifs.filter(p=>p.state==="active").length;
     const uplink=ifs.find(p=>p.id==="SW-24");
-    return `${row("POWER", d.power?"ON":"OFF", d.power?"st-on":"st-off")}
-      ${row("FORWARDING", d.power?"ACTIVE":"DARK", d.power?"st-good":"st-off")}
-      ${row("USED PORTS", `${active}/24 LINKED`, active?"":"st-off")}
-      ${row("ROUTER UPLINK", uplink.text, uplink.cls)}`;
+    const power = row("POWER", d.power?"ON":"OFF", d.power?"st-on":"st-off");
+    const forwarding = row("FORWARDING", d.power?"ACTIVE":"DARK", d.power?"st-good":"st-off");
+    const used = row("USED PORTS", `${active}/24 LINKED`, active?"":"st-off");
+    const routerUplink = row("ROUTER UPLINK", uplink.text, uplink.cls);
+    if (view === "virtual") return `${forwarding}${used}${routerUplink}`;
+    if (view === "physical") return power;
+    return `${power}
+      ${forwarding}
+      ${used}
+      ${routerUplink}`;
   }
   if (name === "RTR-01") {
     const ifs=routerInterfaces(), lan1=ifs.find(p=>p.id==="LAN1"), wan=ifs.find(p=>p.id==="WAN");
-    return `${row("POWER", d.power?"ON":"OFF", d.power?"st-on":"st-off")}
-      ${row("DHCP / DNS", d.power?"ACTIVE":"UNAVAILABLE", d.power?"st-good":"st-off")}
-      ${row("LAN1 UPLINK", lan1.text, lan1.cls)}
-      ${row("WAN", wan.text, wan.cls)}`;
+    const power = row("POWER", d.power?"ON":"OFF", d.power?"st-on":"st-off");
+    const dhcp = row("DHCP / DNS", d.power?"ACTIVE":"UNAVAILABLE", d.power?"st-good":"st-off");
+    const lan1Row = row("LAN1 UPLINK", lan1.text, lan1.cls);
+    const wanRow = row("WAN", wan.text, wan.cls);
+    if (view === "virtual") return `${dhcp}${lan1Row}${wanRow}`;
+    if (view === "physical") return power;
+    return `${power}
+      ${dhcp}
+      ${lan1Row}
+      ${wanRow}`;
   }
   if (name.startsWith("SRV")) {
     const t = traceSRV(name);
-    return `${row("POWER", d.power ? "ON" : "OFF", d.power ? "st-on" : "st-off")}
-      ${row("NIC", t.ok ? "PATCHED — SW-" + t.switchPort.slice(1) : "LINK DOWN", t.ok ? "st-on" : "st-amber")}
-      ${row("IP ADDRESS", d.ip || "—", d.ip ? "" : "st-off")}
-      ${row("VLAN", String(t.vlan), "st-off")}`;
+    const power = row("POWER", d.power ? "ON" : "OFF", d.power ? "st-on" : "st-off");
+    const nic = row("NIC", t.ok ? "PATCHED — SW-" + t.switchPort.slice(1) : "LINK DOWN", t.ok ? "st-on" : "st-amber");
+    const ip = row("IP ADDRESS", d.ip || "—", d.ip ? "" : "st-off");
+    const vlan = row("VLAN", String(t.vlan), "st-off");
+    if (view === "virtual") return `${nic}${ip}${vlan}`;
+    if (view === "physical") return power;
+    return `${power}
+      ${nic}
+      ${ip}
+      ${vlan}`;
   }
   // workstations: the honest path summary
   const c = cable(pcCableId(name));
@@ -622,25 +640,37 @@ function deviceRows(name, d) {
     if (!panelText) panelText = "—";
     panelCls = lit ? (claim && trueJack !== claim ? "st-amber" : "") : "st-off";
   }
-  return `${row("POWER", d.power ? "ON" : "OFF", d.power ? "st-on" : "st-off")}
-    ${row("NIC", d.nic ? "ENABLED" : "DISABLED", d.nic ? "st-on" : "st-amber")}
-    ${row("LINK PATH", pathText, pathCls)}
-    ${row("WALL OUTLET", path.outlet || (seatedB ? c.b.split(":")[0] : "—"), path.outlet ? "" : "st-off")}
-    ${row("PATCH PANEL", panelText, panelCls)}
-    ${row("IP ADDRESS", d.ip || "—", d.ip ? "" : "st-off")}
-    ${row("CONFIG", d.dhcp ? "DHCP (automatic)" : (d.ip ? "STATIC (manual)" : "—"), "st-off")}`;
+  const power = row("POWER", d.power ? "ON" : "OFF", d.power ? "st-on" : "st-off");
+  const nicRow = row("NIC", d.nic ? "ENABLED" : "DISABLED", d.nic ? "st-on" : "st-amber");
+  const linkRow = row("LINK PATH", pathText, pathCls);
+  const outletRow = row("WALL OUTLET", path.outlet || (seatedB ? c.b.split(":")[0] : "—"), path.outlet ? "" : "st-off");
+  const panelRow = row("PATCH PANEL", panelText, panelCls);
+  const ipRow = row("IP ADDRESS", d.ip || "—", d.ip ? "" : "st-off");
+  const configRow = row("CONFIG", d.dhcp ? "DHCP (automatic)" : (d.ip ? "STATIC (manual)" : "—"), "st-off");
+  if (view === "virtual") return `${nicRow}${ipRow}${configRow}`;
+  if (view === "physical") return `${power}${linkRow}${outletRow}${panelRow}`;
+  return `${power}
+    ${nicRow}
+    ${linkRow}
+    ${outletRow}
+    ${panelRow}
+    ${ipRow}
+    ${configRow}`;
 }
 
 // ---------------- device overlay ----------------
-// opts: { from } — "netspace-traffic" unlocks console access. The old
-// string second argument (a selected port id) still works unchanged.
+// opts: { from, view } — "netspace" unlocks console access; view is
+// "virtual" | "physical" when opened from Network Space. The old string
+// second argument (a selected port id) still works unchanged.
 export function openDevice(name, opts) {
   let selectedPort = null;
   let from = currentOrigin;
+  let view = null;
   if (typeof opts === "string") selectedPort = opts;
   else if (opts && typeof opts === "object") {
     selectedPort = opts.selectedPort || null;
     from = opts.from || currentOrigin;
+    view = opts.view || null;
   }
   currentOrigin = from;
   const d = S.devices[name];
@@ -649,27 +679,29 @@ export function openDevice(name, opts) {
   const isNetworkDevice = name === "CSW-01" || name === "RTR-01";
   const selected = selectedPort || selectedPorts[name];
   if (selected) selectedPorts[name] = selected;
-  currentView = { kind:"device", name, selected: selected || null };
+  currentView = { kind:"device", name, selected: selected || null, view };
   const recorded = S.inventoried.includes(name);
   const on = d.power;
-  const canConsole = from === "netspace-traffic";
+  const canConsole = from === "netspace";
+  const software = view !== "physical";
+  const hardware = view !== "virtual";
 
   ov.innerHTML = `
   <div class="device-stage">
     <div class="device-visual">
       <div class="dv-visual-label">OPTICAL INSPECTION / ${name}</div>
-      ${isPC ? pcVisual(name) : name === "CSW-01" ? switchVisual(name, selected) : name === "RTR-01" ? routerVisual(name, selected) : rackVisual(name)}
+      ${isPC ? pcVisual(name, view) : name === "CSW-01" ? switchVisual(name, selected) : name === "RTR-01" ? routerVisual(name, selected) : rackVisual(name)}
     </div>
     <div class="device-panel">
       <div class="dp-name">${name}</div>
       <div class="dp-role">${d.role}</div>
       <div class="dp-rows">
-        ${deviceRows(name, d)}
+        ${deviceRows(name, d, view)}
       </div>
       <div class="dp-observation"><span>FIELD OBSERVATION</span>${observation(name, d)}</div>
-      ${isNetworkDevice ? interfacePanel(name, selected) : ""}
+      ${isNetworkDevice && hardware ? interfacePanel(name, selected) : ""}
       ${d.note ? `<div class="dp-note">◈ ${d.note}</div>` : ""}
-      ${isPC ? `
+      ${isPC && hardware ? `
       <div class="cable-area">
         <div class="cable-title">CONNECTION PANEL — ONE CABLE PER PORT</div>
         <div class="cable-hint">${pcCableConnected(name)
@@ -677,13 +709,13 @@ export function openDevice(name, opts) {
           : "A cable end lies loose. Click the connector to take it in hand, then click a free port to seat it."}</div>
       </div>` : ""}
       <div class="dp-actions">
-        <button class="btn ${on ? "" : "btn-primary"}" id="dv-power">⏻ POWER ${on ? "OFF" : "ON"}</button>
-        ${isPC && on ? `<button class="btn" id="dv-nic">${d.nic ? "DISABLE NIC" : "ENABLE NIC"}</button>` : ""}
-        ${isPC && cable(pcCableId(name)).a ? `<button class="btn" id="dv-unplug">UNPLUG CABLE</button>` : ""}
-        ${isPC && (name === "PC-C" ? on : canConsole) ? `<button class="btn btn-primary" id="dv-use">🖥 USE THIS COMPUTER</button>` : ""}
-        ${isNetworkDevice && canConsole ? `<button class="btn btn-primary" id="dv-console">⌨ OPEN CONSOLE</button>` : ""}
-        ${name === "PC-A" && !S.mechanicsMode ? `<button class="btn" id="dv-screen">👁 CHECK THE SCREEN</button>` : ""}
-        ${!S.mechanicsMode ? (!recorded
+        ${hardware ? `<button class="btn ${on ? "" : "btn-primary"}" id="dv-power">⏻ POWER ${on ? "OFF" : "ON"}</button>` : ""}
+        ${isPC && software && on ? `<button class="btn" id="dv-nic">${d.nic ? "DISABLE NIC" : "ENABLE NIC"}</button>` : ""}
+        ${isPC && hardware && cable(pcCableId(name)).a ? `<button class="btn" id="dv-unplug">UNPLUG CABLE</button>` : ""}
+        ${isPC && software && (name === "PC-C" ? on : canConsole) ? `<button class="btn btn-primary" id="dv-use">🖥 USE THIS COMPUTER</button>` : ""}
+        ${isNetworkDevice && software && canConsole ? `<button class="btn btn-primary" id="dv-console">⌨ OPEN CONSOLE</button>` : ""}
+        ${name === "PC-A" && software && !S.mechanicsMode ? `<button class="btn" id="dv-screen">👁 CHECK THE SCREEN</button>` : ""}
+        ${software && !S.mechanicsMode ? (!recorded
           ? `<button class="btn" id="dv-record">✚ RECORD IN BFREE</button>`
           : `<div class="dp-record-ok">✓ RECORDED IN BFREE JOB BF-1042</div>`) : ""}
         <button class="btn" id="dv-close">STEP BACK</button>
@@ -692,17 +724,17 @@ export function openDevice(name, opts) {
   </div>`;
   ov.classList.remove("hidden");
   syncHandChip();
-  wireCabling(ov);
+  if (hardware) wireCabling(ov);
 
   el("dv-close").onclick = () => closeDevice();
 
   // Switch/router port inspection: SVG port and inspector chip select the same interface.
-  if (isNetworkDevice) {
+  if (isNetworkDevice && hardware) {
     const choosePort = id => {
       if (!id) return;
       selectedPorts[name] = id;
       sfx.hover();
-      openDevice(name, id);
+      openDevice(name, { selectedPort: id, view });
     };
     ov.querySelectorAll("[data-port-id]").forEach(p => {
       p.addEventListener("click", () => { if (!hand) choosePort(p.dataset.portId); });
@@ -741,7 +773,7 @@ export function openDevice(name, opts) {
       sfx.click();
     }
     ctx.changed("power");
-    openDevice(name);
+    openDevice(name, { view });
   };
 
   const nic = el("dv-nic");
@@ -750,38 +782,39 @@ export function openDevice(name, opts) {
     if (d.nic) { sfx.fix(); if (name==="PC-B"){ S.pcbFixed = true; } }
     else sfx.click();
     ctx.changed("nic");
-    openDevice(name);
+    openDevice(name, { view });
   };
 
   const unp = el("dv-unplug");
   if (unp) unp.onclick = () => {
     cable(pcCableId(name)).a = null;
-    sfx.click(); save(); ctx.changed("cable"); openDevice(name);
+    sfx.click(); save(); ctx.changed("cable"); openDevice(name, { view });
   };
 
   const rec = el("dv-record");
   if (rec) rec.onclick = () => {
     S.inventoried.push(name);
     sfx.notify(); ctx.changed("record", name);
-    openDevice(name);
+    openDevice(name, { view });
   };
 
   const use = el("dv-use");
-  if (use) use.onclick = () => { sfx.click(); closeDevice(); ctx.openDesktop({ host:name, from }); };
+  // desktop.js keys its return-to-map path on the launch token, not the view name
+  if (use) use.onclick = () => { sfx.click(); closeDevice(); ctx.openDesktop({ host:name, from: from === "netspace" ? "netspace-traffic" : from }); };
 
   const con = el("dv-console");
-  if (con) con.onclick = () => { sfx.click(); openDeviceConsole(name, from); };
+  if (con) con.onclick = () => { sfx.click(); openDeviceConsole(name, from, view); };
 
   const scr = el("dv-screen");
   if (scr) scr.onclick = () => { sfx.click(); ctx.story.checkPCAScreen(); };
 }
 
 // The CLI takes over the close-up overlay; exit returns to this inspector.
-function openDeviceConsole(name, from) {
-  currentView = { kind:"cli", name, selected:null };
+function openDeviceConsole(name, from, view) {
+  currentView = { kind:"cli", name, selected:null, view };
   const ov = el("device-overlay");
   ov.classList.remove("hidden");
-  openCli(ov, name, { onExit: () => openDevice(name, { from }) });
+  openCli(ov, name, { onExit: () => openDevice(name, { from, view }) });
 }
 
 // ---------------- patch panel overlay ----------------

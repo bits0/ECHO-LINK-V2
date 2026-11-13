@@ -137,6 +137,71 @@ export const CHAPTER1 = {
   // What exists tonight.
   devices: chapter1Devices,
   cabling: chapter1Cabling,
+
+  // Physical floor-plan geometry. The renderer draws whatever this says;
+  // a different floor is a different object, not different code.
+  floorplan: {
+    title: "ASTER FACILITIES — FLOOR 1",
+    walls: [
+      [-470,-300,  20,-300], [  80,-300, 470,-300],   // top + entrance gap
+      [-470, 300, 470, 300],                          // bottom
+      [-470,-300,-470, 300],                          // left
+      [ 470,-300, 470, 300],                          // right
+      [ -30,-300, -30, -20], [ -30,  40, -30, 300],   // staff | corridor
+      [ 150,-300, 150,-140], [ 150, -80, 150, 202],
+      [ 150, 258, 150, 300],                          // corridor | right block
+      [ 150, 110, 470, 110],                          // admin | server
+    ],
+    doors: [
+      { hx:  20, hy:-300, r:60, a0:0,       a1:Math.PI/2 },
+      { hx: -30, hy: -20, r:60, a0:0,       a1:Math.PI/2 },
+      { hx: 150, hy:-140, r:60, a0:Math.PI, a1:Math.PI*1.5 },
+      { hx: 150, hy: 258, r:56, a0:Math.PI, a1:Math.PI*1.5 },
+    ],
+    labels: [
+      { text:"STAFF ROOM", x:-448, y:-276 },
+      { text:"SERVER ROOM", x:162, y:132 },
+      { text:"ADMINISTRATION", x:452, y:-95, rot:-Math.PI/2, align:"center" },
+      { text:"CORRIDOR · CABLE TRAY", x:60, y:0, rot:-Math.PI/2, alpha:.32 },
+    ],
+    devices: {
+      "PC-A":   { x:-390, y: 150, type:"pc" },
+      "PC-B":   { x:-390, y: -80, type:"pc" },
+      "PC-C":   { x:-150, y: 150, type:"pc" },
+      "PC-D":   { x:-180, y:-140, type:"pc" },
+      "SRV-01": { x: 205, y: 268, type:"server" },
+      "SRV-02": { x: 252, y: 268, type:"server" },
+      "RTR-01": { x: 430, y: 150, type:"router" },
+    },
+    outlets: {
+      "OF-01": { x:-380, y: 288, lx:   0, ly: 20, la:"center" },
+      "OF-02": { x:-448, y: -80, lx:  12, ly:  3, la:"left" },
+      "OF-03": { x:-140, y: 288, lx:   0, ly: 20, la:"center" },
+      "OF-04": { x: -34, y:-130, lx: -12, ly:  3, la:"right" },
+      "OF-07": { x:-448, y:-240, lx:  12, ly:  3, la:"left" },
+    },
+    // corridor cable tray: one shared trunk; each run leaves its wall plate
+    // horizontally, taps the trunk at that height, rides to its fan-out
+    // height, then crosses into the server room and drops to its TRUE jack.
+    trunkX: 108,
+    fan: { bottom: 212, step: 9 },
+    taps: {
+      "OF-01": { y: 282, from: [-380, 282] },
+      "OF-02": { y: -80, from: [-441, -80] },
+      "OF-03": { y: 270, from: [-140, 270] },
+      "OF-04": { y:-130, from: [ -29,-130] },
+      "OF-07": { y:-240, from: [-441,-240] },
+    },
+    racks: [
+      { id:"A", label:"RACK A", x:165, y:245, w:125, h:50 },
+      { id:"B", label:"RACK B — PATCH PANEL", x:300, y:245, w:145, h:50 },
+    ],
+    jackX: { start: 312, step: 15 },
+    portX: { start: 316, span: 104, count: 23 },
+    laptop: { x: 310, y: -80 },
+    wan: { x0: 448, y: 150, tip: 545 },
+    riser: { x: 470, y: -240, label: "CABLE TRAY" },
+  },
 };
 
 // ---------- Mechanics Lab: same network, one lie in the walls ----------

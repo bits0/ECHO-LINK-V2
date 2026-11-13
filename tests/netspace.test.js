@@ -112,3 +112,14 @@ test("an outlet with no hidden run has no route", () => {
   delete S.cabling.runs["OF-01"];
   assert.equal(planRunPath("OF-01"), null);
 });
+
+test("the plan geometry comes from the active scenario, not the renderer", () => {
+  const moved = { ...CHAPTER1, floorplan: { ...CHAPTER1.floorplan,
+    taps: { ...CHAPTER1.floorplan.taps, "OF-01": { y: 282, from: [-340, 282] } } } };
+  setScenario(moved);
+  resetState();
+  S.started = true;
+  setupCabling();
+  const p = planRunPath("OF-01");
+  assert.deepEqual([p[0].x, p[0].y], [-340, 282]);
+});

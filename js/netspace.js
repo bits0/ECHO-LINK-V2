@@ -1,10 +1,11 @@
 // ============================================================
 // ECHO//LINK — Network Space: full-view blueprint workspace
-// TRAFFIC mode is a 2D logical topology map; CABLING mode is a 2D
+// VIRTUAL mode is a 2D logical topology map; PHYSICAL mode is a 2D
 // floor-plan view of the physical plant. Both pan and zoom.
 // The view informs, but only terminal ping verifies.
 // ============================================================
 import { S, getSettings } from "./state.js";
+import { activeScenario } from "./scenario.js";
 import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, routerUp } from "./net.js";
 import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
@@ -12,11 +13,11 @@ import { nodeIconImage } from "./icons.js";
 
 let ctx = null;
 let active = null;
-let nsMode = "traffic";            // "traffic" | "cabling" — persists across opens
+let nsMode = "virtual";            // "virtual" | "physical" — persists across opens
 
 const el = id => document.getElementById(id);
 
-// ---------------- traffic mode: 2D blueprint topology ----------------
+// ---------------- virtual mode: 2D blueprint topology ----------------
 // Logical hub-and-spoke: the switch is the center of the lesson.
 // World units are schematic pixels at zoom 1; cam2 pans and zooms.
 const T2 = {
@@ -31,9 +32,9 @@ const T2 = {
 };
 const T2_ZONE20 = { x: 378, y:-215, w: 196, h: 330 };  // dashed VLAN 20 container
 const T2_ISP_TIP = { x: 0, y:-352 };                   // the WAN lead vanishes upward
-let cam2 = null;   // traffic map camera {x, y, z} — persists across opens when the setting allows
+let cam2 = null;   // virtual map camera {x, y, z} — persists across opens when the setting allows
 let camP = null;   // floor-plan camera, same deal
-const acam = () => nsMode === "cabling" ? camP : cam2;
+const acam = () => nsMode === "physical" ? camP : cam2;
 
 function fitCam(W, H) {
   return { x: 0, y: -10, z: Math.min(2.5, Math.max(.4, Math.min((W-170)/1150, (H-190)/760))) };
@@ -65,7 +66,7 @@ function t2NodeAt(mx, my, W, H) {
   return null;
 }
 
-// LINKS — the logical edges drawn in TRAFFIC mode
+// LINKS — the logical edges drawn in VIRTUAL mode
 const LINKS = [
   ["RTR-01","CSW-01"], ["CSW-01","PC-A"], ["CSW-01","PC-B"],
   ["CSW-01","PC-C"], ["CSW-01","PC-D"], ["CSW-01","SRV-01"], ["CSW-01","SRV-02"],
@@ -299,7 +300,7 @@ const T2_EDGE_STYLE = {
   off:     { col:"rgba(92,100,112,.3)",   dash:[5,6] },
 };
 
-// Legend copy for the TRAFFIC edge styles. The samples are rendered from
+// Legend copy for the VIRTUAL edge styles. The samples are rendered from
 // T2_EDGE_STYLE itself, so the legend can never drift from the canvas.
 const T2_EDGE_LABEL = {
   up:      "BOTH ENDS UP",
@@ -424,67 +425,31 @@ function smallLabel(g, p, text, color) {
 // drawn; hidden in-wall runs appear only while tracing (hover).
 // Navigate + inspect — fixes happen in the close-up views.
 
-// device positions on the plan (world units)
-const P2 = {
-  "PC-A":   { x:-390, y: 150, type:"pc" },
-  "PC-B":   { x:-390, y: -80, type:"pc" },
-  "PC-C":   { x:-150, y: 150, type:"pc" },
-  "PC-D":   { x:-180, y:-140, type:"pc" },
-  "SRV-01": { x: 205, y: 268, type:"server" },
-  "SRV-02": { x: 252, y: 268, type:"server" },
-  "RTR-01": { x: 430, y: 150, type:"router" },
-};
-// wall outlets: position + label offset/alignment
-const P2_OUT = {
-  "OF-01": { x:-380, y: 288, lx:   0, ly: 20, la:"center" },
-  "OF-02": { x:-448, y: -80, lx:  12, ly:  3, la:"left" },
-  "OF-03": { x:-140, y: 288, lx:   0, ly: 20, la:"center" },
-  "OF-04": { x: -34, y:-130, lx: -12, ly:  3, la:"right" },
-  "OF-07": { x:-448, y:-240, lx:  12, ly:  3, la:"left" },
-};
-// corridor cable tray: one shared trunk. Every run leaves its wall plate
-// horizontally, taps the trunk at that height, rides the trunk to its own
-// fan-out height, then crosses the server-room wall and drops to its TRUE
-// jack. Fan-out heights are staggered from the runs' true jacks, so no drop
-// crosses another run's horizontal.
-const P2_TRUNK_X = 108;
-const P2_FAN_BOTTOM = 212, P2_FAN_STEP = 9;
-const P2_TAP = {
-  "OF-01": { y: 282, from: [-380, 282] },
-  "OF-02": { y: -80, from: [-441, -80] },
-  "OF-03": { y: 270, from: [-140, 270] },
-  "OF-04": { y:-130, from: [ -29,-130] },
-  "OF-07": { y:-240, from: [-441,-240] },
-};
-const P2_RACKA = { x:165, y:245, w:125, h:50 };
-const P2_RACKB = { x:300, y:245, w:145, h:50 };
-const P2_JACK_X = i => 312 + i*15;            // PP-01..PP-08 across Rack B
-const P2_PORT_X = n => 316 + (n-1)*(104/23);  // CSW-01 p01..p24 on the chassis
-const P2_LAPTOP = { x: 310, y: -80 };
-const P2_WAN = { x0: 448, y: 150, tip: 545 };
-
 function planJackX(outlet) {
+  const F = activeScenario.floorplan;
   const jack = S.cabling && S.cabling.runs[outlet];
   if (!jack) return null;
-  return P2_JACK_X(parseInt(jack.slice(3),10) - 1);
+  return F.jackX.start + (parseInt(jack.slice(3),10) - 1) * F.jackX.step;
 }
 // Leftmost jack exits the trunk lowest, so its drop can never pass through
 // another run's horizontal fan-out.
 function planFanY(outlet) {
+  const F = activeScenario.floorplan;
   if (!S.cabling || !S.cabling.runs[outlet]) return null;
-  const order = Object.keys(P2_TAP)
+  const order = Object.keys(F.taps)
     .filter(o => S.cabling.runs[o])
     .sort((a, b) => planJackX(a) - planJackX(b));
-  return P2_FAN_BOTTOM - order.indexOf(outlet) * P2_FAN_STEP;
+  return F.fan.bottom - order.indexOf(outlet) * F.fan.step;
 }
 // vertical extent the trunk must cover: every tap and every fan-out
 function planTrunkSpan() {
+  const F = activeScenario.floorplan;
   if (!S.cabling) return null;
   let lo = Infinity, hi = -Infinity;
-  for (const o of Object.keys(P2_TAP)) {
+  for (const o of Object.keys(F.taps)) {
     if (!S.cabling.runs[o]) continue;
-    lo = Math.min(lo, P2_TAP[o].y, planFanY(o));
-    hi = Math.max(hi, P2_TAP[o].y, planFanY(o));
+    lo = Math.min(lo, F.taps[o].y, planFanY(o));
+    hi = Math.max(hi, F.taps[o].y, planFanY(o));
   }
   return lo <= hi ? { lo, hi } : null;
 }
@@ -492,10 +457,11 @@ function planTrunkSpan() {
 // Exported for tests: the drawn route is the contract that the TRUE jack
 // from S.cabling.runs is honoured, not the printed panel label.
 export function planRunPath(outlet) {
-  const T = P2_TAP[outlet]; if (!T || !S.cabling) return null;
+  const F = activeScenario.floorplan;
+  const T = F.taps[outlet]; if (!T || !S.cabling) return null;
   const jx = planJackX(outlet); if (jx == null) return null;   // TRUE endpoint
   const fy = planFanY(outlet);
-  return [T.from, [P2_TRUNK_X, T.y], [P2_TRUNK_X, fy], [jx, fy], [jx, 254]].map(([x,y]) => ({x,y}));
+  return [T.from, [F.trunkX, T.y], [F.trunkX, fy], [jx, fy], [jx, 254]].map(([x,y]) => ({x,y}));
 }
 
 // ---------- plan hit-testing ----------
@@ -588,6 +554,7 @@ function planTipFor(h) {
 
 function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   const C = S.cabling; if (!C) return;
+  const F = activeScenario.floorplan;
   const z = acam().z;
   planHot = [];
   const chain = hoveredPlan ? planChainOf(hoveredPlan.kind, hoveredPlan.id) : null;
@@ -597,47 +564,33 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   // ---- the sheet itself: walls, doors, room labels (never dimmed) ----
   g.globalAlpha = 1;
   g.strokeStyle = "rgba(154,164,178,.75)"; g.lineWidth = 2.6; g.lineCap = "round";
-  const WALLS = [
-    [[-470,-300],[  20,-300]], [[  80,-300],[ 470,-300]],     // top + entrance gap
-    [[-470, 300],[ 470, 300]],                                 // bottom
-    [[-470,-300],[-470, 300]],                                 // left
-    [[ 470,-300],[ 470, 300]],                                 // right
-    [[ -30,-300],[ -30, -20]], [[ -30,  40],[ -30, 300]],      // staff | corridor
-    [[ 150,-300],[ 150,-140]], [[ 150, -80],[ 150, 202]],
-    [[ 150, 258],[ 150, 300]],                                 // corridor | right block
-    [[ 150, 110],[ 470, 110]],                                 // admin | server
-  ];
-  for (const [a,b] of WALLS) {
-    const p0 = P(a[0],a[1]), p1 = P(b[0],b[1]);
+  for (const [x1,y1,x2,y2] of F.walls) {
+    const p0 = P(x1,y1), p1 = P(x2,y2);
     g.beginPath(); g.moveTo(p0.x,p0.y); g.lineTo(p1.x,p1.y); g.stroke();
   }
   g.strokeStyle = "rgba(154,164,178,.45)"; g.lineWidth = 1.1;
-  const DOORS = [
-    { hx:  20, hy:-300, r:60, a0:0,        a1:Math.PI/2 },   // north entrance, swings into corridor
-    { hx: -30, hy: -20, r:60, a0:0,        a1:Math.PI/2 },   // staff ↔ corridor
-    { hx: 150, hy:-140, r:60, a0:Math.PI,  a1:Math.PI*1.5 }, // corridor ↔ administration
-    { hx: 150, hy: 258, r:56, a0:Math.PI,  a1:Math.PI*1.5 }, // corridor ↔ server room
-  ];
-  for (const d of DOORS) {
+  for (const d of F.doors) {
     const hp = P(d.hx, d.hy), tp = P(d.hx + Math.cos(d.a0)*d.r, d.hy + Math.sin(d.a0)*d.r);
     g.beginPath(); g.moveTo(hp.x,hp.y); g.lineTo(tp.x,tp.y); g.stroke();
     g.beginPath(); g.arc(hp.x, hp.y, d.r*z, d.a0, d.a1); g.stroke();
   }
-  g.fillStyle = "rgba(154,164,178,.5)"; g.textAlign = "left";
   g.font = `${Math.max(9, 12*z)}px ui-monospace, monospace`;
-  let lp = P(-448,-276); g.fillText("STAFF ROOM", lp.x, lp.y);
-  lp = P(162,132); g.fillText("SERVER ROOM", lp.x, lp.y);
-  g.save(); lp = P(452,-95); g.translate(lp.x,lp.y); g.rotate(-Math.PI/2); g.textAlign = "center";
-  g.fillText("ADMINISTRATION", 0, 0); g.restore();
-  g.save(); lp = P(60,0); g.translate(lp.x,lp.y); g.rotate(-Math.PI/2);
-  g.fillStyle = "rgba(154,164,178,.32)"; g.fillText("CORRIDOR · CABLE TRAY", 0, 0); g.restore();
+  for (const lab of F.labels) {
+    const lp = P(lab.x, lab.y);
+    g.save(); g.translate(lp.x, lp.y);
+    if (lab.rot) g.rotate(lab.rot);
+    g.textAlign = lab.align || "left";
+    g.fillStyle = `rgba(154,164,178,${lab.alpha == null ? .5 : lab.alpha})`;
+    g.fillText(lab.text, 0, 0);
+    g.restore();
+  }
   g.textAlign = "left";
 
   // ---- the shared trunk: one conduit in the tray, always visible ----
   // Runs themselves stay hidden; this is only the tray they share.
   const trunk = planTrunkSpan();
   if (trunk) {
-    const a = P(P2_TRUNK_X, trunk.lo - 6), b = P(P2_TRUNK_X, trunk.hi + 6);
+    const a = P(F.trunkX, trunk.lo - 6), b = P(F.trunkX, trunk.hi + 6);
     g.globalAlpha = 1;
     g.strokeStyle = "rgba(154,164,178,.09)"; g.lineWidth = 5;
     g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
@@ -647,7 +600,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
 
   // ---- desks + workstations ----
   for (const pc of ["PC-A","PC-B","PC-C","PC-D"]) {
-    const L = P2[pc], p = P(L.x, L.y);
+    const L = F.devices[pc], p = P(L.x, L.y);
     const member = !chain || chain.pc === pc;
     dim(member);
     g.fillStyle = "rgba(32,40,51,.5)"; g.strokeStyle = "rgba(96,104,117,.7)"; g.lineWidth = 1.1;
@@ -673,10 +626,10 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
     const seatedNic = c.a === pc+":nic";
     const member = !chain || chain.pc === pc;
     dim(member);
-    const p0 = P(P2[pc].x, P2[pc].y);
+    const p0 = P(F.devices[pc].x, F.devices[pc].y);
     const onChain = chain && chain.pc === pc;
     if (m) {
-      const p1 = P(P2_OUT[m[1]].x, P2_OUT[m[1]].y);
+      const p1 = P(F.outlets[m[1]].x, F.outlets[m[1]].y);
       if (seatedNic) drawPolyline(g, [p0,p1], onChain ? "rgba(121,201,141,.95)" : "rgba(178,188,202,.6)", onChain ? 2.2 : 1.3);
       else { drawPolyline(g, [p0,p1], "rgba(224,161,62,.5)", 1.2, [3,4]); breakMarker(g, {x:p0.x, y:p0.y-24*z}, time); }
       planHot.push({ kind:"cord", id:pc, seg:[p0,p1] });
@@ -688,7 +641,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   }
 
   // ---- wall outlets ----
-  for (const [id, o] of Object.entries(P2_OUT)) {
+  for (const [id, o] of Object.entries(F.outlets)) {
     const p = P(o.x, o.y);
     const member = !chain || chain.outlet === id;
     dim(member);
@@ -711,7 +664,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
       planHot.push({ kind:"run", id:chain.outlet, seg:sp });
       g.font = `${Math.max(7.5, 8.5*z)}px ui-monospace, monospace`; g.textAlign = "left";
       g.fillStyle = live ? "rgba(121,201,141,.85)" : "rgba(224,161,62,.85)";
-      const st = P2_TAP[chain.outlet].from;
+      const st = F.taps[chain.outlet].from;
       const rl = P(st[0]+10, st[1]-12);
       g.fillText(`HIDDEN RUN · ${chain.outlet} → ${chain.jack}`, rl.x, rl.y);
     }
@@ -721,13 +674,14 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   // Rack A (servers)
   dim(!chain || !chain.pc);   // servers never belong to a PC chain
   {
-    const r = P(P2_RACKA.x, P2_RACKA.y);
+    const rackA = F.racks.find(r => r.id === "A");
+    const r = P(rackA.x, rackA.y);
     g.fillStyle = "rgba(24,30,38,.75)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.2;
-    g.beginPath(); g.roundRect(r.x, r.y, P2_RACKA.w*z, P2_RACKA.h*z, 4); g.fill(); g.stroke();
+    g.beginPath(); g.roundRect(r.x, r.y, rackA.w*z, rackA.h*z, 4); g.fill(); g.stroke();
     g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
-    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText("RACK A", r.x, r.y-6*z);
+    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rackA.label, r.x, r.y-6*z);
     for (const srv of ["SRV-01","SRV-02"]) {
-      const L = P2[srv], p = P(L.x, L.y);
+      const L = F.devices[srv], p = P(L.x, L.y);
       const v = byName[srv];
       const col = T2_STATE_COL[v ? v.state : "silent"] || "#5b6472";
       const img = nodeIconImage("server", v && v.state === "off" ? "#5b6472" : "#b2bcca", col);
@@ -741,15 +695,16 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   // Rack B (patch panel + switch)
   dim(true);
   {
-    const r = P(P2_RACKB.x, P2_RACKB.y);
+    const rackB = F.racks.find(r => r.id === "B");
+    const r = P(rackB.x, rackB.y);
     g.fillStyle = "rgba(24,30,38,.75)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.2;
-    g.beginPath(); g.roundRect(r.x, r.y, P2_RACKB.w*z, P2_RACKB.h*z, 4); g.fill(); g.stroke();
+    g.beginPath(); g.roundRect(r.x, r.y, rackB.w*z, rackB.h*z, 4); g.fill(); g.stroke();
     g.font = `${Math.max(7, 8*z)}px ui-monospace, monospace`; g.textAlign = "left";
-    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText("RACK B — PATCH PANEL", r.x, r.y-6*z);
+    g.fillStyle = "rgba(126,145,165,.75)"; g.fillText(rackB.label, r.x, r.y-6*z);
   }
   // panel jacks with continuity LEDs + patch leads to switch ports
   Object.keys(C.panel).sort().forEach((jack, i) => {
-    const jx = P2_JACK_X(i), p = P(jx, 260);
+    const jx = F.jackX.start + i*F.jackX.step, p = P(jx, 260);
     const live = runContinuity(jack);
     const printed = C.panel[jack].printed;
     const conn = cableAt(jack + ":jack");
@@ -769,7 +724,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
       const other = conn.cable[conn.end === "a" ? "b" : "a"];
       const sm = (other || "").match(/^CSW-01:(p\d+)$/);
       if (sm) {
-        const px = P2_PORT_X(parseInt(sm[1],10));
+        const px = F.portX.start + (parseInt(sm[1],10) - 1)*(F.portX.span/F.portX.count);
         const pts = [P(jx,265), P(jx,271), P(px,271), P(px,276)];
         drawPolyline(g, pts, chain && chain.jack === jack ? "rgba(121,201,141,.95)" : "rgba(178,188,202,.65)", 1.3);
         planHot.push({ kind:"lead", id:conn.id, seg:pts });
@@ -787,7 +742,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
     g.fillStyle = "rgba(17,21,27,.9)"; g.strokeStyle = "rgba(96,104,117,.8)"; g.lineWidth = 1.1;
     g.beginPath(); g.roundRect(sw.x, sw.y, 116*z, 14*z, 2); g.fill(); g.stroke();
     for (let n = 1; n <= 24; n++) {
-      const pp = P(P2_PORT_X(n), 277);
+      const pp = P(F.portX.start + (n-1)*(F.portX.span/F.portX.count), 277);
       g.fillStyle = cableAt(`CSW-01:p${String(n).padStart(2,"0")}`) ? "rgba(126,145,165,.9)" : "rgba(60,66,78,.9)";
       g.fillRect(pp.x-1.5, pp.y-2, 3, 4.5);
     }
@@ -797,16 +752,16 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   }
   // server leads (Rack A → switch)
   for (const [cid, srv] of [["C-SRV1","SRV-01"],["C-SRV2","SRV-02"]]) {
-    const c = C.cables[cid], L = P2[srv];
+    const c = C.cables[cid], L = F.devices[srv];
     const sm = (c.b || "").match(/^CSW-01:(p\d+)$/);
     if (c.a === srv+":nic" && sm) {
-      const px = P2_PORT_X(parseInt(sm[1],10));
+      const px = F.portX.start + (parseInt(sm[1],10) - 1)*(F.portX.span/F.portX.count);
       drawPolyline(g, [P(L.x,255), P(L.x,238), P(px,238), P(px,276)], "rgba(178,188,202,.45)", 1.2);
     }
   }
   // router + uplink + the WAN lead out the server-room wall
   {
-    const rp = P(P2["RTR-01"].x, P2["RTR-01"].y);
+    const rp = P(F.devices["RTR-01"].x, F.devices["RTR-01"].y);
     const v = byName["RTR-01"];
     const img = nodeIconImage("router", "#b2bcca", T2_STATE_COL[v ? v.state : "silent"] || "#5b6472");
     const hs = 14*z;
@@ -817,7 +772,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
     const up = C.cables["C-UPLINK"];
     if (up && up.a && up.b)
       drawPolyline(g, [P(430,166), P(430,232), P(420,232), P(420,276)], "rgba(178,188,202,.5)", 1.2);
-    const w0 = P(P2_WAN.x0, P2_WAN.y), w1 = P(P2_WAN.tip, P2_WAN.y);
+    const w0 = P(F.wan.x0, F.wan.y), w1 = P(F.wan.tip, F.wan.y);
     const fade = g.createLinearGradient(w0.x, w0.y, w1.x, w1.y);
     fade.addColorStop(0, "rgba(154,164,178,.55)"); fade.addColorStop(1, "rgba(154,164,178,.02)");
     g.strokeStyle = fade; g.lineWidth = 1.3; g.setLineDash([6,6]);
@@ -829,7 +784,7 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   // ---- the director's laptop: a room the network never reached ----
   {
     g.globalAlpha = chain ? .3 : 1;
-    const p = P(P2_LAPTOP.x, P2_LAPTOP.y);
+    const p = P(F.laptop.x, F.laptop.y);
     g.fillStyle = "rgba(32,40,51,.5)"; g.strokeStyle = "rgba(96,104,117,.5)"; g.lineWidth = 1.1;
     g.beginPath(); g.roundRect(p.x-30*z, p.y+10*z, 60*z, 20*z, 3*z); g.fill(); g.stroke();
     const img = nodeIconImage("pc", "#5b6472", "#3a4250");
@@ -846,10 +801,10 @@ function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
     const t = tracePC(chain.pc);
     if (!t.ok) {
       let fp = null;
-      if (t.failAt === "cable" || t.failAt === "nic") fp = P2[chain.pc];
-      else if (t.failAt === "outlet" && t.outlet) fp = P2_OUT[t.outlet];
+      if (t.failAt === "cable" || t.failAt === "nic") fp = F.devices[chain.pc];
+      else if (t.failAt === "outlet" && t.outlet) fp = F.outlets[t.outlet];
       else if (t.failAt === "run") { const pts = planRunPath(t.outlet); fp = pts && pts[Math.floor(pts.length/2)]; }
-      else if (t.panelJack) fp = { x: P2_JACK_X(parseInt(t.panelJack.slice(3),10)-1), y: 260 };
+      else if (t.panelJack) fp = { x: F.jackX.start + (parseInt(t.panelJack.slice(3),10)-1)*F.jackX.step, y: 260 };
       if (fp) { g.globalAlpha = 1; breakMarker(g, P(fp.x, fp.y), time); }
     }
   }
@@ -868,8 +823,8 @@ export function openNetspace(c) {
       <div class="ns3d-head">
         <div><span>NETWORK SPACE</span> / OFFICE SEGMENT</div>
         <div class="ns3d-modes">
-          <button class="ns-mode" id="ns-mode-traffic">TRAFFIC</button>
-          <button class="ns-mode" id="ns-mode-cabling">CABLING</button>
+          <button class="ns-mode" id="ns-mode-virtual">VIRTUAL</button>
+          <button class="ns-mode" id="ns-mode-physical">PHYSICAL</button>
         </div>
         <div class="ns3d-live">LIVE OBSERVATION <i></i></div>
       </div>
@@ -928,7 +883,7 @@ export function openNetspace(c) {
     const view=netspaceView();
     const byName=Object.fromEntries(view.map(v=>[v.name,v]));
 
-    if (nsMode === "cabling") {
+    if (nsMode === "physical") {
       // the physical layer — the building sheet
       t2Grid(g, W, H);
       drawCablingPlan(g, W, H, time, byName, hoveredPlan);
@@ -941,9 +896,9 @@ export function openNetspace(c) {
     }
 
     let text;
-    if (nsMode === "cabling") {
+    if (nsMode === "physical") {
       const lit = S.cabling ? Object.keys(S.cabling.panel).filter(j=>runContinuity(j)).length : 0;
-      text = `CABLING — ${lit}/8 PANEL LIGHTS ON · HOVER TO TRACE A RUN · CLICK TO INSPECT`;
+      text = `PHYSICAL — ${lit}/8 PANEL LIGHTS ON · HOVER TO TRACE A RUN · CLICK TO INSPECT`;
     } else {
       const observed=view.filter(v=>v.provenance==="network-observed").length;
       const verifiedCount=[S.pcbVerified,S.pcdVerified,S.pcaIpPinged].filter(Boolean).length;
@@ -960,7 +915,7 @@ export function openNetspace(c) {
     pointer.x=(e.clientX-r.left)/r.width-.5; pointer.y=(e.clientY-r.top)/r.height-.5;
     const mx=e.clientX-r.left,my=e.clientY-r.top,W=canvas.clientWidth,H=canvas.clientHeight;
     hovered=null;
-    if (nsMode === "cabling") {
+    if (nsMode === "physical") {
       const h = planHitAt(mx, my);
       hoveredPlan = h;
       if (h) {
@@ -1026,14 +981,14 @@ export function openNetspace(c) {
     if (drag.moved < 6) {
       const r=canvas.getBoundingClientRect();
       const mx=e.clientX-r.left, my=e.clientY-r.top;
-      if (nsMode === "traffic") {
+      if (nsMode === "virtual") {
         const name = t2NodeAt(mx, my, canvas.clientWidth, canvas.clientHeight);
-        if (name) { tip.classList.add("hidden"); openDevice(name, { from:"netspace-traffic" }); }
+        if (name) { tip.classList.add("hidden"); openDevice(name, { from:"netspace", view:"virtual" }); }
       } else {
         const h = planHitAt(mx, my);
         if (h) {
           tip.classList.add("hidden");
-          if (h.kind === "dev") openDevice(h.id);
+          if (h.kind === "dev") openDevice(h.id, { from:"netspace", view:"physical" });
           else if (h.kind === "outlet") openOutlet(h.id);
           else if (h.kind === "jack") openPatchPanel(h.id);
         }
@@ -1053,7 +1008,7 @@ export function openNetspace(c) {
   ov.querySelector("#ns-zoom-out").onclick = () => zoomAt(canvas.clientWidth/2, canvas.clientHeight/2, 1/1.3, canvas.clientWidth, canvas.clientHeight);
   ov.querySelector("#ns-zoom-reset").onclick = () => {
     const W=canvas.clientWidth, H=canvas.clientHeight;
-    Object.assign(acam(), nsMode === "cabling" ? fitCamPlan(W,H) : fitCam(W,H));
+    Object.assign(acam(), nsMode === "physical" ? fitCamPlan(W,H) : fitCam(W,H));
   };
 
   const terminalPanel=ov.querySelector("#ns-terminal");
@@ -1066,22 +1021,22 @@ export function openNetspace(c) {
   }
   const note = ov.querySelector("#ns-note");
   const legend = ov.querySelector("#ns-legend");
-  const mTraffic = ov.querySelector("#ns-mode-traffic"), mCabling = ov.querySelector("#ns-mode-cabling");
+  const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
   function setMode(m) {
     nsMode = m;
     hoveredLink = null;
     hoveredPlan = null;
-    mTraffic.classList.toggle("on", m === "traffic");
-    mCabling.classList.toggle("on", m === "cabling");
-    legend.classList.toggle("hidden", m !== "traffic");
+    mVirtual.classList.toggle("on", m === "virtual");
+    mPhysical.classList.toggle("on", m === "physical");
+    legend.classList.toggle("hidden", m !== "virtual");
     zoomBar.style.display = "flex";
     canvas.classList.add("ns-can-pan");
-    note.textContent = m === "cabling"
-      ? "CABLING MODE — THE PHYSICAL PLANT · DASHED = IN THE WALLS · HOVER TO TRACE A RUN"
+    note.textContent = m === "physical"
+      ? "PHYSICAL MODE — THE PHYSICAL PLANT · DASHED = IN THE WALLS · HOVER TO TRACE A RUN"
       : "A VIEW, NOT THE WHOLE TRUTH · VERIFY BY PING";
   }
-  mTraffic.onclick = () => setMode("traffic");
-  mCabling.onclick = () => setMode("cabling");
+  mVirtual.onclick = () => setMode("virtual");
+  mPhysical.onclick = () => setMode("physical");
   setMode(nsMode);
 
   ov.querySelector("#ns-open-terminal").onclick=()=>setTerminal(terminalPanel.classList.contains("hidden"));

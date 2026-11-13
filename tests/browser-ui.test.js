@@ -116,3 +116,76 @@ test("browser window — the page is whatever the network answers", async () => 
     server.close();
   }
 });
+
+test("device inspector — the virtual and physical halves of the panel", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+
+    await page.goto(url);
+    await page.click("#btn-lab");
+    await page.waitForSelector("#game-screen:not(.hidden)");
+    await page.click('[data-hs="door:office"]');
+    await page.waitForSelector('[data-hs="device:PC-C"]');
+    await page.click('[data-hs="device:PC-C"]');
+    await page.click("#dv-use");
+    await page.waitForSelector("#dock-netspace");
+    await page.click("#dock-netspace");
+    await page.waitForSelector("#ns-mode-virtual");
+
+    assert.equal(await txt(page.locator("#ns-mode-virtual")), "VIRTUAL");
+    assert.equal(await txt(page.locator("#ns-mode-physical")), "PHYSICAL");
+    assert.equal(await page.locator("#ns-mode-virtual.on").count(), 1, "virtual is the default view");
+
+    const open = async view => {
+      await page.evaluate(v => import("/js/device.js").then(m => m.openDevice("PC-A", v ? { view: v } : undefined)), view);
+      await page.waitForSelector("#device-overlay:not(.hidden)");
+      return txt(page.locator("#device-overlay"));
+    };
+    const close = async () => {
+      await page.click("#device-overlay #dv-close");
+      await page.waitForSelector("#device-overlay", { state: "hidden" });
+    };
+
+    let panel = await open("virtual");
+    assert.match(panel, /NIC/);
+    assert.match(panel, /IP ADDRESS/);
+    assert.match(panel, /CONFIG/);
+    assert.ok(!panel.includes("WALL OUTLET"), "virtual shows no WALL OUTLET");
+    assert.ok(!panel.includes("PATCH PANEL"), "virtual shows no PATCH PANEL");
+    assert.ok(!panel.includes("LINK PATH"), "virtual shows no LINK PATH");
+    assert.equal(await page.locator("#device-overlay .iface-panel").count(), 0, "virtual has no port strip");
+    assert.equal(await page.locator("#device-overlay #dv-nic").count(), 1, "virtual keeps the NIC verb");
+    assert.equal(await page.locator("#device-overlay #dv-power").count(), 0, "virtual has no power verb");
+    await close();
+
+    panel = await open("physical");
+    assert.match(panel, /POWER/);
+    assert.match(panel, /LINK PATH/);
+    assert.match(panel, /WALL OUTLET/);
+    assert.match(panel, /PATCH PANEL/);
+    assert.ok(!panel.includes("IP ADDRESS"), "physical shows no IP ADDRESS");
+    assert.ok(!panel.includes("CONFIG"), "physical shows no CONFIG");
+    assert.equal(await page.locator("#device-overlay #dv-power").count(), 1, "physical keeps the power verb");
+    assert.equal(await page.locator("#device-overlay #dv-nic").count(), 0, "physical has no NIC verb");
+    await close();
+
+    panel = await open(null);
+    assert.match(panel, /LINK PATH/, "no view keeps the whole panel");
+    assert.match(panel, /IP ADDRESS/, "no view keeps the whole panel");
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
