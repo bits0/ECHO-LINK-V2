@@ -655,17 +655,24 @@ function drawSheetInterior(g, sheet, z, iso, HW, HD) {
   }
 }
 
-// the slab frame — shared by the drawing and the pointer, so they cannot drift
-const FAC = { HW: 14, HD: 4, TH: 1.2, GAP: 6.2, TILT: 0.58, WALL: 0.9 };
+// the block frame — shared by the drawing and the pointer, so they cannot drift
+const FAC = {
+  HW: 14, HD: 4, TH: 2.6, GAP: 1.2, WALL: 0.9,      // blocks, the seam above each, the walls on top
+  AX: 23 * Math.PI / 180,                            // long axis: 23° off the horizontal
+  AY: 33 * Math.PI / 180,                            // short axis: 33° off the horizontal, opposite sense
+};
 
-// fit the whole stack (measured at s = 1) into the canvas with a 60px margin;
-// GAP, TILT and floor count all feed the fit, so nothing is clipped at zoom 1
+// fit the whole volume (measured at s = 1) into the canvas with a 60px margin;
+// plate corners are sampled at the top walls, both plate levels and the underside,
+// so thickness, seams and floor count all feed the fit and nothing is clipped at zoom 1
 function facilityProjection(W, H) {
-  const { HW, HD, TH, GAP, TILT } = FAC;
-  const zBot = -(FACILITY.floors.length - 1) * GAP - TH;
+  const { HW, HD, TH, GAP, WALL, AX, AY } = FAC;
+  const ca = Math.cos(AX), sa = Math.sin(AX), cb = Math.cos(AY), sb = Math.sin(AY);
+  const steps = FACILITY.floors.length - 1;
+  const zLevels = [WALL, 0, -steps * (GAP + TH), -steps * (GAP + TH) - TH];
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const z of [0, zBot]) for (const [x, y] of [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]]) {
-    const px = x - y, py = (x + y) * TILT - z;
+  for (const z of zLevels) for (const [x, y] of [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]]) {
+    const px = x * ca - y * cb, py = x * sa + y * sb - z;
     minX = Math.min(minX, px); maxX = Math.max(maxX, px);
     minY = Math.min(minY, py); maxY = Math.max(maxY, py);
   }
@@ -673,7 +680,7 @@ function facilityProjection(W, H) {
   const s = Math.min((W - 2 * pad) / (maxX - minX), (H - 2 * pad) / (maxY - minY)) * facZoom;
   const ox = W / 2 - ((minX + maxX) / 2) * s;
   const oy = H / 2 - ((minY + maxY) / 2) * s;
-  return { s, ox, iso: (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) * TILT - z) * s }) };
+  return { s, ox, iso: (x, y, z) => ({ x: ox + (x * ca - y * cb) * s, y: oy + (x * sa + y * sb - z) * s }) };
 }
 
 // point-in-polygon over the projected top faces; later-drawn plates sit in front
@@ -681,7 +688,7 @@ function buildingHitAt(mx, my, W, H) {
   const { iso } = facilityProjection(W, H);
   const floors = FACILITY.floors;
   for (let i = floors.length - 1; i >= 0; i--) {
-    const z = -FAC.GAP * i;
+    const z = -(FAC.GAP + FAC.TH) * i;
     const pts = [[-FAC.HW,-FAC.HD],[FAC.HW,-FAC.HD],[FAC.HW,FAC.HD],[-FAC.HW,FAC.HD]].map(([x,y]) => iso(x, y, z));
     let inside = false;
     for (let k = 0, j = 3; k < 4; j = k++) {
@@ -697,6 +704,7 @@ function buildingHitAt(mx, my, W, H) {
 function drawFacilityBuilding(g, W, H, canvas) {
   planHot = [];
   const floors = FACILITY.floors, { GAP, HW, HD, TH } = FAC, { iso } = facilityProjection(W, H);
+  const step = GAP + TH;
   const quad = (pts, fill) => {
     g.beginPath();
     pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
@@ -706,14 +714,15 @@ function drawFacilityBuilding(g, W, H, canvas) {
   };
   g.globalAlpha = 1;
 
-  // ground plane line, one gap below the lowest slab
-  const ga = iso(-21, 0, -GAP * floors.length), gb = iso(21, 0, -GAP * floors.length);
+  // ground plane line, one seam below the lowest block's underside
+  const zGround = -(floors.length - 1) * step - TH - GAP;
+  const ga = iso(-21, 0, zGround), gb = iso(21, 0, zGround);
   g.strokeStyle = "rgba(154,164,178,.16)"; g.lineWidth = 1;
   g.beginPath(); g.moveTo(ga.x, ga.y); g.lineTo(gb.x, gb.y); g.stroke();
 
   // plates, top of the stack first: L0 at the top, L3 at the bottom
   floors.forEach((f, i) => {
-    const z = -GAP * i, sheet = !!f.sheet, selected = f.id === selectedFacilityFloor;
+    const z = -step * i, sheet = !!f.sheet, selected = f.id === selectedFacilityFloor;
     const hovered = hoveredFacilityFloor && hoveredFacilityFloor.id === f.id;
     const topPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z));
     const botPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z - TH));
@@ -733,26 +742,12 @@ function drawFacilityBuilding(g, W, H, canvas) {
   // the sheets' own interiors, over the stack so they stay legible —
   // never the office's plan, never invented for a void floor
   floors.forEach((f, i) => {
-    if (f.sheet) drawSheetInterior(g, f.sheet, -GAP * i, iso, HW, HD);
+    if (f.sheet) drawSheetInterior(g, f.sheet, -step * i, iso, HW, HD);
   });
-
-  // slim core prism through every board, one node per level
-  const zBot = -GAP * (floors.length - 1) - TH, c = 1.2;
-  const coreX = [iso(c,-c,0), iso(c,c,0), iso(c,c,zBot), iso(c,-c,zBot)];
-  const coreY = [iso(c,c,0), iso(-c,c,0), iso(-c,c,zBot), iso(c,c,zBot)];
-  g.setLineDash([]); g.lineWidth = 1; g.strokeStyle = "rgba(154,164,178,.34)";
-  quad(coreX, "rgba(154,164,178,.06)");
-  quad(coreY, "rgba(154,164,178,.06)");
-  quad([iso(-c,-c,0), iso(c,-c,0), iso(c,c,0), iso(-c,c,0)], "rgba(30,38,48,.55)");
-  for (let i = 0; i < floors.length; i++) {
-    const r = 1.05, node = [[r,0],[0,r],[-r,0],[0,-r]].map(([x,y]) => iso(x, y, -GAP * i));
-    g.strokeStyle = "rgba(224,232,242,.85)";
-    quad(node, "rgba(210,220,232,.60)");
-  }
 
   // slab centres, canvas-relative, for pointer probes
   for (let i = 0; i < floors.length; i++) {
-    const ctr = iso(0, 0, -GAP * i);
+    const ctr = iso(0, 0, -step * i);
     canvas.dataset["slab" + floors[i].id] = `${Math.round(ctr.x)},${Math.round(ctr.y)}`;
   }
 }
