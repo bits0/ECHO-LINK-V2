@@ -18,6 +18,7 @@ let physView = "floor";            // "floor" | "building"
 let previewFloor = null;           // a preview sheet: shell and racks, nothing wired
 let selectedFacilityFloor = null;  // facility floor drawn amber in the building
 let facZoom = 1;                   // building zoom: scales the iso projection only
+let hoveredFacilityFloor = null;   // the slab under the pointer in the building
 
 const el = id => document.getElementById(id);
 
@@ -652,13 +653,35 @@ function drawSheetInterior(g, sheet, z, iso, HW, HD) {
   }
 }
 
-// ---- the facility map: iso slabs, interiors only where a sheet exists ----
-function drawFacilityBuilding(g, W, H) {
-  planHot = [];
-  const floors = FACILITY.floors, GAP = 4.4, HW = 14, HD = 4, TH = 1.2;
+// the slab frame — shared by the drawing and the pointer, so they cannot drift
+const FAC = { GAP: 4.4, HW: 14, HD: 4, TH: 1.2 };
+function facilityProjection(W, H) {
   const s = Math.max(4, Math.min(26, Math.min((W - 420) / 40, (H - 240) / 34))) * facZoom;
   const ox = W / 2, oy = H / 2 - 6.6 * s;
-  const iso = (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) / 2 - z) * s });
+  return { s, ox, iso: (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) / 2 - z) * s }) };
+}
+
+// point-in-polygon over the projected top faces; later-drawn plates sit in front
+function buildingHitAt(mx, my, W, H) {
+  const { iso } = facilityProjection(W, H);
+  const floors = FACILITY.floors;
+  for (let i = floors.length - 1; i >= 0; i--) {
+    const z = -FAC.GAP * i;
+    const pts = [[-FAC.HW,-FAC.HD],[FAC.HW,-FAC.HD],[FAC.HW,FAC.HD],[-FAC.HW,FAC.HD]].map(([x,y]) => iso(x, y, z));
+    let inside = false;
+    for (let k = 0, j = 3; k < 4; j = k++) {
+      const { x: xi, y: yi } = pts[k], { x: xj, y: yj } = pts[j];
+      if ((yi > my) !== (yj > my) && mx < (xj - xi) * (my - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return floors[i];
+  }
+  return null;
+}
+
+// ---- the facility map: iso slabs, interiors only where a sheet exists ----
+function drawFacilityBuilding(g, W, H, canvas) {
+  planHot = [];
+  const floors = FACILITY.floors, { GAP, HW, HD, TH } = FAC, { iso } = facilityProjection(W, H);
   const quad = (pts, fill) => {
     g.beginPath();
     pts.forEach((p, k) => k ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y));
@@ -676,13 +699,16 @@ function drawFacilityBuilding(g, W, H) {
   // plates, top of the stack first: L0 at the top, L3 at the bottom
   floors.forEach((f, i) => {
     const z = -GAP * i, sheet = !!f.sheet, selected = f.id === selectedFacilityFloor;
+    const hovered = hoveredFacilityFloor && hoveredFacilityFloor.id === f.id;
     const topPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z));
     const botPts = [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]].map(([x,y]) => iso(x, y, z - TH));
     const sideX = [topPts[1], topPts[2], botPts[2], botPts[1]];   // +x face
     const sideY = [topPts[2], topPts[3], botPts[3], botPts[2]];   // +y face
     g.setLineDash(sheet ? [] : [5, 5]);
-    g.lineWidth = selected ? 1.8 : sheet ? 1.5 : 1;
-    g.strokeStyle = selected ? "rgba(224,161,62,.9)" : sheet ? "rgba(154,164,178,.75)" : "rgba(154,164,178,.28)";
+    g.lineWidth = selected ? 1.8 : hovered ? 1.6 : sheet ? 1.5 : 1;
+    g.strokeStyle = selected ? "rgba(224,161,62,.9)"
+      : hovered ? (sheet ? "rgba(224,161,62,.62)" : "rgba(196,206,220,.55)")
+      : sheet ? "rgba(154,164,178,.75)" : "rgba(154,164,178,.28)";
     const sideFill = selected ? "rgba(120,86,24,.30)" : sheet ? "rgba(12,16,22,.62)" : "rgba(9,12,16,.55)";
     quad(sideX, sideFill); quad(sideY, sideFill);   // thickness, same stroke as the top
     quad(topPts, selected ? "rgba(224,161,62,.10)" : sheet ? "rgba(32,40,51,.55)" : "rgba(20,25,32,.38)");
@@ -707,6 +733,12 @@ function drawFacilityBuilding(g, W, H) {
     const r = 1.05, node = [[r,0],[0,r],[-r,0],[0,-r]].map(([x,y]) => iso(x, y, -GAP * i));
     g.strokeStyle = "rgba(224,232,242,.85)";
     quad(node, "rgba(210,220,232,.60)");
+  }
+
+  // slab centres, canvas-relative, for pointer probes
+  for (let i = 0; i < floors.length; i++) {
+    const ctr = iso(0, 0, -GAP * i);
+    canvas.dataset["slab" + floors[i].id] = `${Math.round(ctr.x)},${Math.round(ctr.y)}`;
   }
 }
 
@@ -949,12 +981,14 @@ export function openNetspace(c) {
   physView = "floor";
   selectedFacilityFloor = null;
   facZoom = 1;
+  hoveredFacilityFloor = null;
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
     <div class="ns3d-shell">
       <canvas id="netspace-canvas"></canvas>
       <div class="ns3d-vignette"></div>
+      <div id="ns-fade" class="ns3d-fade"></div>
       <div class="ns3d-head">
         <div id="ns-head-ctx"><span>NETWORK SPACE</span> / <b id="ns-head-seg">F1 — OFFICE</b></div>
         <div class="ns3d-modes">
@@ -993,6 +1027,7 @@ export function openNetspace(c) {
     </div>`;
 
   const canvas = ov.querySelector("#netspace-canvas");
+  canvas.dataset.nsBusy = "0";
   const tip = ov.querySelector("#ns-tip");
   const readout = ov.querySelector("#ns-readout");
   const zoomBar = ov.querySelector("#ns-zoom");
@@ -1029,7 +1064,7 @@ export function openNetspace(c) {
     if (nsMode === "physical") {
       // the physical layer — the building sheet, or the whole building
       t2Grid(g, W, H);
-      if (physView === "building") drawFacilityBuilding(g, W, H);
+      if (physView === "building") drawFacilityBuilding(g, W, H, canvas);
       else drawCablingPlan(g, W, H, time, byName, hoveredPlan);
     } else {
       // the logical layer — 2D blueprint topology
@@ -1107,6 +1142,22 @@ export function openNetspace(c) {
     if(!hovered) tip.classList.add("hidden");
   }
 
+  // the building: the slab under the pointer answers for itself
+  function hoverBuilding(e) {
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    const floor = buildingHitAt(mx, my, W, H);
+    hoveredFacilityFloor = floor;
+    canvas.dataset.facHover = floor ? floor.id : "";
+    canvas.style.cursor = floor && floor.sheet ? "pointer" : "default";
+    if (!floor) { tip.classList.add("hidden"); return; }
+    tip.innerHTML = `<b>${floor.id} — ${floor.name}</b><br/>${floor.sheet ? "SHEET ON FILE" : "NO SHEET — NOT SURVEYED"}<br/><span class="tip-tag">${floor.sheet ? "click to open" : "not surveyed"}</span>`;
+    tip.classList.remove("hidden");
+    tip.style.left = Math.min(mx + 18, W - 260) + "px";
+    tip.style.top = Math.max(18, my - 16) + "px";
+  }
+
   // both modes: drag to pan, wheel to zoom, click to inspect
   let drag = null;
   canvas.addEventListener("pointerdown", e => {
@@ -1125,6 +1176,7 @@ export function openNetspace(c) {
       hovered=null; hoveredLink=null; hoveredPlan=null; tip.classList.add("hidden");
       return;
     }
+    if (nsMode === "physical" && physView === "building") return hoverBuilding(e);
     moveTip(e);
   });
   canvas.addEventListener("pointerup", e => {
@@ -1133,7 +1185,10 @@ export function openNetspace(c) {
     if (drag.moved < 6) {
       const r=canvas.getBoundingClientRect();
       const mx=e.clientX-r.left, my=e.clientY-r.top;
-      if (nsMode === "virtual") {
+      if (nsMode === "physical" && physView === "building") {
+        const floor = hoveredFacilityFloor;
+        if (floor && floor.sheet) switchView(() => showFacilityFloor(floor));   // same path as the cards
+      } else if (nsMode === "virtual") {
         const name = t2NodeAt(mx, my, canvas.clientWidth, canvas.clientHeight);
         if (name) { tip.classList.add("hidden"); openDevice(name, { from:"netspace", view:"virtual" }); }
       } else {
@@ -1158,7 +1213,10 @@ export function openNetspace(c) {
     const r=canvas.getBoundingClientRect();
     zoomAt(e.clientX-r.left, e.clientY-r.top, e.deltaY < 0 ? 1.15 : 1/1.15, canvas.clientWidth, canvas.clientHeight);
   }, { passive:false });
-  canvas.addEventListener("mouseleave",()=>{hovered=null;hoveredPlan=null;tip.classList.add("hidden");});
+  canvas.addEventListener("mouseleave",()=>{
+    hovered=null;hoveredPlan=null;tip.classList.add("hidden");
+    hoveredFacilityFloor=null; canvas.dataset.facHover=""; canvas.style.cursor="";
+  });
 
   const inBuilding = () => nsMode === "physical" && physView === "building";
   function setFacZoom(z) {
@@ -1193,6 +1251,7 @@ export function openNetspace(c) {
   const headSeg = ov.querySelector("#ns-head-seg");
   const facPanel = ov.querySelector("#ns-fac"), facList = ov.querySelector("#ns-fac-list");
   const viewToggle = ov.querySelector("#ns-view-toggle");
+  const fadeEl = ov.querySelector("#ns-fade");
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
 
   function renderChrome() {
@@ -1208,7 +1267,10 @@ export function openNetspace(c) {
     for (const card of facList.querySelectorAll(".fac-card"))
       card.classList.toggle("active", card.dataset.floor === selectedFacilityFloor);
   }
-  const clearHover = () => { hovered = null; hoveredPlan = null; tip.classList.add("hidden"); planHot = []; };
+  const clearHover = () => {
+    hovered = null; hoveredPlan = null; tip.classList.add("hidden"); planHot = [];
+    hoveredFacilityFloor = null; canvas.dataset.facHover = ""; canvas.style.cursor = "";
+  };
   function showBuilding() { physView = "building"; setFacZoom(1); clearHover(); renderChrome(); }
   function showOffice() {
     physView = "floor"; previewFloor = null; selectedFacilityFloor = null;
@@ -1222,12 +1284,54 @@ export function openNetspace(c) {
     Object.assign(camP, fitCamPlan(canvas.clientWidth, canvas.clientHeight));
     renderChrome();
   }
-  viewToggle.onclick = () => (physView === "building" ? showOffice() : showBuilding());
+  // one veil owns every swap: out to black, swap while dark, then settle back
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let transitionBusy = false;
+  function switchView(swap) {
+    if (transitionBusy) return;                       // navigation is locked while the veil moves
+    canvas.dataset.nsBusy = "1";
+    if (reducedMotion) { swap(); canvas.dataset.nsBusy = "0"; return; }
+    transitionBusy = true;
+
+    let swapped = false, timer = 0;
+    const doneOut = () => {                           // after this the veil is fully opaque
+      if (swapped) return;
+      swapped = true;
+      clearTimeout(timer);
+      fadeEl.removeEventListener("transitionend", onOut);
+      fadeEl.classList.remove("ns-in");
+      swap();                                         // crumb, header and readout change in the dark
+      requestAnimationFrame(() => {
+        let settled = false;
+        const doneIn = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          fadeEl.removeEventListener("transitionend", onIn);
+          transitionBusy = false;
+          canvas.dataset.nsBusy = "0";
+        };
+        const onIn = e => { if (e.target === fadeEl && e.propertyName === "opacity") doneIn(); };
+        fadeEl.addEventListener("transitionend", onIn);
+        timer = setTimeout(doneIn, 280);              // in 240ms + fallback
+        fadeEl.classList.add("ns-in");
+        void fadeEl.offsetWidth;                      // commit the settle easing
+        fadeEl.style.opacity = "0";
+      });
+    };
+    const onOut = e => { if (e.target === fadeEl && e.propertyName === "opacity") doneOut(); };
+    fadeEl.addEventListener("transitionend", onOut);
+    timer = setTimeout(doneOut, 200);                 // out 160ms + fallback
+    fadeEl.classList.remove("ns-in");
+    void fadeEl.offsetWidth;                          // commit the out easing
+    fadeEl.style.opacity = "1";
+  }
+  viewToggle.onclick = () => switchView(() => (physView === "building" ? showOffice() : showBuilding()));
   facList.addEventListener("click", e => {
     const card = e.target.closest(".fac-card");
     const floor = card && FACILITY.floors.find(f => f.id === card.dataset.floor);
     if (!floor || !floor.sheet) return;   // no sheet, no journey
-    showFacilityFloor(floor);
+    switchView(() => showFacilityFloor(floor));
   });
   function setMode(m) {
     nsMode = m;

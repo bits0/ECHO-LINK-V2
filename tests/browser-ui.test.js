@@ -261,19 +261,85 @@ test("facility map — four floors, one sheet, one breadcrumb", async () => {
     assert.equal(await txt(page.locator("#ns-readout")), before, "a void card changes no readout");
     assert.equal(await page.locator("#fac-l2.active").count(), 0);
 
-    // (e) the surveyed card opens its sheet
+    // (a/b) slabs answer the pointer; a void floor says default
+    const centreOf = async id => {
+      const v = await page.evaluate(slab => document.querySelector("#netspace-canvas").dataset[slab], `slab${id}`);
+      const [cx, cy] = v.split(",").map(Number);
+      const box = await page.locator("#netspace-canvas").boundingBox();
+      return { x: box.x + cx, y: box.y + cy };
+    };
+    const facHover = () => page.evaluate(() => document.querySelector("#netspace-canvas").dataset.facHover);
+    const cursor = () => page.locator("#netspace-canvas").evaluate(el => el.style.cursor);
+    const idle = () => page.waitForFunction(() => document.querySelector("#netspace-canvas").dataset.nsBusy === "0", null, { timeout: 10000 });
+
+    const l1 = await centreOf("L1");
+    await page.mouse.move(l1.x, l1.y);
+    assert.equal(await facHover(), "L1", "the surveyed slab answers the pointer");
+    assert.equal(await cursor(), "pointer", "a floor with a sheet is clickable");
+
+    const l2 = await centreOf("L2");
+    await page.mouse.move(l2.x, l2.y);
+    assert.equal(await facHover(), "L2", "a void slab answers too");
+    assert.equal(await cursor(), "default", "a floor without a sheet is not clickable");
+
+    // (c) a void slab click opens nothing
+    await page.mouse.click(l2.x, l2.y);
+    await page.waitForTimeout(300);   // the swap, if any, would land inside this window
+    assert.equal(await txt(page.locator("#ns-crumb-text")), buildingCrumb, "a void slab leaves the building");
+    assert.equal(await txt(page.locator("#ns-readout")), before, "a void slab changes no readout");
+    assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.nsBusy), "0", "a void slab starts no transition");
+
+    // (g) leaving the slab field clears the hover
+    await page.mouse.move(l1.x, l1.y);
+    assert.equal(await facHover(), "L1");
+    await page.mouse.move(200, 30);
+    assert.equal(await facHover(), "", "empty space clears the hover");
+
+    // (f) the view transition has a real duration
+    assert.equal(await page.locator("#ns-fade").count(), 1, "the fade layer exists");
+    assert.notEqual(await page.locator("#ns-fade").evaluate(el => getComputedStyle(el).transitionDuration), "0s");
+
+    // the surveyed card opens its sheet
     await page.click("#fac-l1");
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PREVIEW"), null, { timeout: 10000 });
+    await idle();
     assert.equal(await txt(page.locator("#ns-crumb-text")), "L1 — NOC");
     assert.match(await txt(page.locator("#ns-head-ctx")), /L1 — NOC/);
     assert.equal(await page.locator("#fac-l1.active").count(), 1, "the open floor is marked active");
     assert.equal(await page.locator("#ns-fac.hidden").count(), 1, "cards belong to the building");
 
-    // (f) back to the building, then back to the office
+    // back to the building, then back to the office
     await page.click("#ns-view-toggle");
     await page.waitForFunction(() => (document.querySelector("#ns-crumb-text")?.textContent || "").includes("FACILITY MAP"), null, { timeout: 10000 });
+    await idle();
     assert.equal(await page.locator("#fac-l1.active").count(), 1, "the surveyed floor stays marked");
     assert.equal(await txt(page.locator("#ns-view-toggle")), "BACK");
+
+    // (d) the surveyed slab opens the same sheet the card does — behind the veil
+    await page.mouse.move(l1.x, l1.y);
+    await page.mouse.click(l1.x, l1.y);
+    const duringOut = await page.evaluate(() => ({
+      busy: document.querySelector("#netspace-canvas").dataset.nsBusy,
+      crumb: (document.querySelector("#ns-crumb-text")?.textContent || "").trim(),
+    }));
+    assert.equal(duringOut.busy, "1", "the veil is busy");
+    assert.equal(duringOut.crumb, buildingCrumb, "the swap waits for the dark");
+
+    // (e) navigation is locked while the veil is down
+    await page.evaluate(() => document.querySelector('[data-floor="L0"]').dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.nsBusy), "1", "still busy");
+
+    await page.waitForFunction(() => (document.querySelector("#ns-crumb-text")?.textContent || "").includes("L1 — NOC"), null, { timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector("#netspace-canvas").dataset.nsBusy === "0", null, { timeout: 10000 });
+    assert.equal(await txt(page.locator("#ns-crumb-text")), "L1 — NOC", "the locked click changed nothing");
+    assert.match(await txt(page.locator("#ns-head-ctx")), /L1 — NOC/);
+    assert.match(await txt(page.locator("#ns-readout")), /PREVIEW/);
+    assert.equal(await page.locator("#fac-l1.active").count(), 1);
+
+    // and back to the office
+    await page.click("#ns-view-toggle");
+    await page.waitForFunction(() => (document.querySelector("#ns-crumb-text")?.textContent || "").includes("FACILITY MAP"), null, { timeout: 10000 });
+    await idle();
     await page.click("#ns-view-toggle");
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
     assert.equal(await txt(page.locator("#ns-crumb-text")), "F1 — OFFICE");
