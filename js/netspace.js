@@ -636,12 +636,14 @@ function drawSheetInterior(g, sheet, z, iso, HW, HD) {
 
   g.setLineDash([]);
   g.strokeStyle = "rgba(136,155,175,.55)"; g.lineWidth = 1;
-  g.beginPath();
+  g.fillStyle = "rgba(14,19,25,.72)";             // dimmer than the plate: rooms, not lines
   for (const [x1, y1, x2, y2] of walls) {
     const a = iso(U(x1), V(y1), z), b = iso(U(x2), V(y2), z);
-    g.moveTo(a.x, a.y); g.lineTo(b.x, b.y);
+    const at = iso(U(x1), V(y1), z + FAC.WALL), bt = iso(U(x2), V(y2), z + FAC.WALL);
+    g.beginPath();
+    g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(bt.x, bt.y); g.lineTo(at.x, at.y);
+    g.closePath(); g.fill(); g.stroke();
   }
-  g.stroke();
 
   g.fillStyle = "rgba(154,164,178,.40)"; g.strokeStyle = "rgba(154,164,178,.60)";
   for (const rack of sheet.racks || []) {
@@ -654,11 +656,24 @@ function drawSheetInterior(g, sheet, z, iso, HW, HD) {
 }
 
 // the slab frame — shared by the drawing and the pointer, so they cannot drift
-const FAC = { GAP: 4.4, HW: 14, HD: 4, TH: 1.2 };
+const FAC = { HW: 14, HD: 4, TH: 1.2, GAP: 6.2, TILT: 0.58, WALL: 0.9 };
+
+// fit the whole stack (measured at s = 1) into the canvas with a 60px margin;
+// GAP, TILT and floor count all feed the fit, so nothing is clipped at zoom 1
 function facilityProjection(W, H) {
-  const s = Math.max(4, Math.min(26, Math.min((W - 420) / 40, (H - 240) / 34))) * facZoom;
-  const ox = W / 2, oy = H / 2 - 6.6 * s;
-  return { s, ox, iso: (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) / 2 - z) * s }) };
+  const { HW, HD, TH, GAP, TILT } = FAC;
+  const zBot = -(FACILITY.floors.length - 1) * GAP - TH;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const z of [0, zBot]) for (const [x, y] of [[-HW,-HD],[HW,-HD],[HW,HD],[-HW,HD]]) {
+    const px = x - y, py = (x + y) * TILT - z;
+    minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+  }
+  const pad = 60;
+  const s = Math.min((W - 2 * pad) / (maxX - minX), (H - 2 * pad) / (maxY - minY)) * facZoom;
+  const ox = W / 2 - ((minX + maxX) / 2) * s;
+  const oy = H / 2 - ((minY + maxY) / 2) * s;
+  return { s, ox, iso: (x, y, z) => ({ x: ox + (x - y) * s, y: oy + ((x + y) * TILT - z) * s }) };
 }
 
 // point-in-polygon over the projected top faces; later-drawn plates sit in front

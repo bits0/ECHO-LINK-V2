@@ -245,6 +245,24 @@ test("facility map — four floors, one sheet, one breadcrumb", async () => {
     await page.click("#ns-zoom-reset");
     assert.equal(await facZoom(), "1.00", "reset returns to 1");
 
+    // (a/b) the stack is fitted to the canvas and reads top to bottom
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const fit = await page.evaluate(() => {
+      const c = document.querySelector("#netspace-canvas");
+      return {
+        w: c.clientWidth, h: c.clientHeight,
+        pts: ["L0","L1","L2","L3"].map(id => c.dataset["slab" + id].split(",").map(Number)),
+      };
+    });
+    for (const [x, y] of fit.pts) {
+      assert.ok(x >= 40 && x <= fit.w - 40, `slab x ${x} keeps its margin (${fit.w}px wide)`);
+      assert.ok(y >= 40 && y <= fit.h - 40, `slab y ${y} keeps its margin (${fit.h}px tall)`);
+    }
+    for (let i = 1; i < fit.pts.length; i++) {
+      const gap = fit.pts[i][1] - fit.pts[i - 1][1];
+      assert.ok(gap >= 20, `floors ${i - 1}→${i} are ${gap}px apart`);
+    }
+
     // (c) four cards; only the surveyed floor can be opened
     assert.equal(await page.locator("#ns-fac .fac-card").count(), 4);
     assert.equal(await page.locator("#fac-l1").evaluate(el => el.disabled), false, "L1 card is enabled");
