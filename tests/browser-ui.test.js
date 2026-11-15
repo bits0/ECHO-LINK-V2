@@ -484,6 +484,189 @@ test("Act 0 syslog — a third NetSpace view: cards, counts, filters, freeze, lo
   }
 });
 
+test("Act 0 cascade — the wave arrives card by card", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  const watch = p => {
+    p.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    p.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    p.on("dialog", d => d.accept());
+  };
+  const openFeed = async p => {
+    await p.goto(url);
+    await p.click("#btn-act0");
+    await p.waitForSelector("#dock-netspace");
+    await p.click("#dock-netspace");
+    await p.waitForSelector("#ns-mode-syslog");
+    await p.click("#ns-mode-syslog");
+    await p.waitForSelector("#ns-syslog:not(.hidden)");
+  };
+  const snap = p => p.evaluate(() => ({
+    cards: document.querySelectorAll(".sys-card").length,
+    fresh: document.querySelectorAll(".sys-card.is-new").length,
+    header: ["nf-i", "nf-w", "nf-c"].map(c => Number(document.querySelector(`#nf-counts .${c}`).textContent.split(" ")[1])),
+  }));
+  try {
+    browser = await chromium.launch({ headless: true });
+
+    // ---- the wave, sampled while it lands ----
+    const page = await browser.newPage();
+    watch(page);
+    await openFeed(page);
+    assert.equal(await page.locator(".sys-card").count(), 12, "the twelve calm cards are drawn");
+
+    await page.evaluate(() => import("/js/act0.js").then(m => m.cascadeStream({ minDelay: 100, maxDelay: 100 })));
+    await page.waitForTimeout(500);
+    const at500 = await snap(page);
+    await page.waitForTimeout(1000);
+    const at1500 = await snap(page);
+    await page.waitForTimeout(1500);
+    const at3000 = await snap(page);
+    console.log(`cascade samples: 0.5s=${at500.cards} 1.5s=${at1500.cards} 3.0s=${at3000.cards}`);
+
+    assert.ok(at500.cards > 12 && at500.cards < 24, `(w) the feed grows in steps (0.5s: ${at500.cards})`);
+    assert.ok(at500.fresh > 0, "arriving cards carry .is-new");
+    assert.ok(at1500.cards > at500.cards && at1500.cards < 36, `(w) still climbing at 1.5s (${at1500.cards})`);
+    assert.equal(at1500.header[0] + at1500.header[1] + at1500.header[2], at1500.cards, "header counts follow the feed");
+    assert.ok(at1500.header[2] > 0 && at1500.header[0] >= 12, "the counters tick up mid-stream");
+    assert.equal(at3000.cards, 36, "the whole block landed");
+    assert.deepEqual(at3000.header, [14, 6, 16], "final counts are the feed's own tally");
+    assert.equal(at3000.fresh, 0, "no stale arrival class after the wave");
+    assert.equal(await page.locator(".sys-card").last().locator(".sc-ts").textContent(), "02:14:00.047", "newest card at the tail");
+
+    // the anomaly still wears exactly a CRIT card's class list
+    const anomaly = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll(".sys-card")];
+      const target = cards.find(c => c.querySelector(".sc-ts").textContent === "02:13:58.771");
+      const other = cards.find(c => c.classList.contains("crit") && c !== target);
+      return { found: !!target, same: !!target && target.className === other.className };
+    });
+    assert.equal(anomaly.found, true, "the 02:13:58.771 card is in the feed");
+    assert.equal(anomaly.same, true, "the anomaly is indistinguishable from another CRIT card");
+    await page.close();
+
+    // ---- freeze while the wave is landing ----
+    const parked = await browser.newPage();
+    watch(parked);
+    await openFeed(parked);
+    assert.equal(await parked.locator(".sys-card").count(), 12, "freeze at twelve visible cards");
+    await parked.click("#nf-freeze");
+    assert.equal(await parked.locator("#nf-freeze.on").count(), 1, "the feed is frozen");
+    const top = await parked.locator("#nf-scroll").evaluate(el => el.scrollTop);
+    await parked.evaluate(() => import("/js/act0.js").then(m => m.cascadeStream({ minDelay: 120, maxDelay: 120 })));
+    await parked.waitForTimeout(1500);
+    assert.equal(await parked.locator("#nf-scroll").evaluate(el => el.scrollTop), top, "the frozen feed does not move");
+    const pill = await parked.locator("#nf-new").innerText();
+    assert.ok(Number(pill.split(" ")[0]) > 0, `the pill counts the arrivals (${pill})`);
+    assert.equal(await parked.locator("#nf-new.hidden").count(), 0, "the pill is visible while frozen");
+    await parked.click("#nf-new");
+    await parked.waitForTimeout(450);
+    assert.equal(await parked.locator("#nf-new.hidden").count(), 1, "unfreeze clears the pill");
+    assert.equal(await parked.locator("#nf-scroll").evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop <= 1),
+      true, "unfreeze returns to the newest card");
+    await parked.close();
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
+
+test("syslog — scrollback holds, and the wave keeps its own pace", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  const watch = p => {
+    p.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    p.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    p.on("dialog", d => d.accept());
+  };
+  const openFeed = async p => {
+    await p.goto(url);
+    await p.click("#btn-act0");
+    await p.waitForSelector("#dock-netspace");
+    await p.click("#dock-netspace");
+    await p.waitForSelector("#ns-mode-syslog");
+    await p.click("#ns-mode-syslog");
+    await p.waitForSelector("#ns-syslog:not(.hidden)");
+  };
+  const atBottom = p => p.locator("#nf-scroll").evaluate(el => el.scrollHeight - el.clientHeight - el.scrollTop <= 4);
+  try {
+    browser = await chromium.launch({ headless: true });
+
+    // ---- scrollback while cards keep arriving ----
+    const page = await browser.newPage();
+    watch(page);
+    await openFeed(page);
+    await page.evaluate(() => import("/js/act0.js").then(m => m.cascadeStream({ minDelay: 250, maxDelay: 250 })));
+    await page.waitForTimeout(1000);
+
+    // (aa) read the top: the feed must hold still while cards land underneath
+    await page.locator("#nf-scroll").evaluate(el => { el.scrollTop = 0; });
+    await page.waitForTimeout(1200);
+    const top = await page.locator("#nf-scroll").evaluate(el => el.scrollTop);
+    assert.ok(top <= 40, `(aa) a scrolled-up feed is not snapped (scrollTop ${top})`);
+    const pill = await page.locator("#nf-new").innerText();
+    assert.ok(Number(pill.split(" ")[0]) > 0, `(aa) the pill counts what arrived (${pill})`);
+    assert.equal(await page.locator("#nf-new.hidden").count(), 0, "(aa) the pill is visible");
+
+    // (ab) the pill returns to the newest card
+    await page.click("#nf-new");
+    assert.equal(await atBottom(page), true, "(ab) the pill jumps to the bottom");
+
+    // (ac) a manual return to the bottom is sticky
+    await page.locator("#nf-scroll").evaluate(el => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(1200);
+    assert.equal(await atBottom(page), true, "(ac) the bottom stays pinned");
+
+    // the wave finishes; a finished feed does not snap either
+    await page.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36, null, { timeout: 30000 });
+    await page.locator("#nf-scroll").evaluate(el => { el.scrollTop = 0; });
+    await page.waitForTimeout(1200);
+    assert.equal(await page.locator("#nf-scroll").evaluate(el => el.scrollTop), 0, "(aa) a finished wave still holds its place");
+
+    // (ad) FREEZE pins mid-list; unfreeze goes to the bottom
+    await page.locator("#nf-scroll").evaluate(el => { el.scrollTop = Math.round((el.scrollHeight - el.clientHeight) / 2); });
+    const mid = await page.locator("#nf-scroll").evaluate(el => el.scrollTop);
+    await page.click("#nf-freeze");
+    await page.waitForTimeout(1200);
+    assert.equal(await page.locator("#nf-scroll").evaluate(el => el.scrollTop), mid, "(ad) frozen mid-list, nothing moves");
+    await page.click("#nf-freeze");
+    await page.waitForTimeout(150);
+    assert.equal(await atBottom(page), true, "(ad) unfreeze returns to the bottom");
+    assert.equal(await page.locator("#nf-scroll").isVisible(), true, "the feed is still the feed");
+    await page.close();
+
+    // ---- the act's own cadence: one card every 1–5s ----
+    const slow = await browser.newPage();
+    watch(slow);
+    await openFeed(slow);
+    const started = Date.now();
+    await slow.evaluate(() => import("/js/act0.js").then(m => m.cascadeStream()));
+    await slow.waitForTimeout(5200);
+    const midCards = await slow.locator(".sys-card").count();
+    assert.ok(midCards > 12 && midCards <= 21, `the wave is paced by seconds (5s: ${midCards - 12} cards)`);
+    await slow.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36, null, { timeout: 150000 });
+    const seconds = (Date.now() - started) / 1000;
+    console.log(`slow wave: 5s=${midCards - 12} arrivals, total=${seconds.toFixed(1)}s`);
+    assert.ok(seconds > 24 && seconds < 125, `24 gaps inside 1–5s (took ${seconds.toFixed(1)}s)`);
+    await slow.close();
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
+
 test("shell dock — one dock, three states, one surface", async () => {
   const server = await startServer();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;

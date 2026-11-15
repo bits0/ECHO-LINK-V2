@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { S, resetState } from "../js/state.js";
 import {
-  ACT0, bootAct0, clockNow, cascade, visibleNodes, nodeState,
+  ACT0, CASCADE_LOG, bootAct0, clockNow, cascade, cascadeStream, visibleNodes, nodeState,
   openSession, closeSession, seatConsoleLink, pinLog, removePin,
   beginChat, revealDue, choose, maybeSequence2, notifySopOpened,
 } from "../js/act0.js";
@@ -285,3 +285,60 @@ test("(v) sequence 2 waits for the pause to land", () => {
   assert.equal(S.chat.current, "s2-01");
   assert.equal(S.chat.seq2Pending, false);
 });
+
+const delay = ms => new Promise(r => setTimeout(r, ms));
+const waitFor = async (fn, ms = 3000) => {
+  const until = Date.now() + ms;
+  while (Date.now() < until) { if (fn()) return true; await delay(15); }
+  return false;
+};
+
+test("(w) cascadeStream lands mid-way through the block", async () => {
+  boot();
+  assert.equal(cascadeStream({ minDelay: 40, maxDelay: 40 }).started, true);
+  await delay(120);
+  assert.ok(S.logs.length >= 13 && S.logs.length <= 35, `mid-stream length ${S.logs.length}`);
+  assert.equal(S.cascadeDone, false);
+  assert.equal(S.cascadeStreaming, true);
+  // the devices fail as their lines land, not all at the end
+  const at = id => S.nodes.find(n => n.id === id).state;
+  assert.equal(at("L1-SW-DIST01"), "red", "the first failing line reds its device");
+  assert.equal(at("L3-SAN-01"), "green", "a later device is still healthy");
+  await waitFor(() => S.cascadeDone, 3000);
+});
+
+test("(x) the stream finishes the whole block and stops", async () => {
+  boot();
+  cascadeStream({ minDelay: 40, maxDelay: 40 });
+  await delay(1300);
+  assert.equal(S.logs.length, 36);
+  assert.equal(S.cascadeDone, true);
+  assert.equal(S.cascadeStreaming, false);
+  assert.equal(S.logs[35].message, "clock resync from ntp: +0.000s");
+  assert.equal(S.nodes.filter(n => n.after === "red").every(n => n.state === "red"), true);
+});
+
+test("(y) a second cascadeStream during the first is a no-op", async () => {
+  boot();
+  assert.equal(cascadeStream({ minDelay: 40, maxDelay: 40 }).started, true);
+  assert.equal(cascadeStream({ minDelay: 40, maxDelay: 40 }).started, false, "the second call refuses");
+  await delay(300);
+  const mid = S.logs.length;
+  assert.ok(mid < 12 + 12, `one stream, not two (length ${mid})`);
+  await waitFor(() => S.cascadeDone, 3000);
+  assert.equal(S.logs.length, 36, "the block landed exactly once");
+});
+
+test("(z) streamed entries are the cascade log in order, plus arrivedAt", async () => {
+  boot();
+  cascadeStream({ minDelay: 1, maxDelay: 1 });
+  assert.equal(await waitFor(() => S.cascadeDone, 3000), true);
+  const streamed = S.logs.slice(12);
+  assert.equal(streamed.length, CASCADE_LOG.length);
+  streamed.forEach((entry, i) => {
+    assert.equal(typeof entry.arrivedAt, "number");
+    const { arrivedAt, ...rest } = entry;
+    assert.deepEqual(rest, CASCADE_LOG[i], `slot ${i + 12} is unchanged`);
+  });
+});
+

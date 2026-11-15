@@ -572,6 +572,8 @@ button{font-family:inherit;cursor:pointer}
 }
 .sys-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:8px 0 0 8px;background:var(--sc,#6f7f93)}
 .sys-card.info{--sc:#6f7f93}.sys-card.warn{--sc:#e0a13e}.sys-card.crit{--sc:#c2554d}
+.sys-card.is-new{animation:nf-in .22s ease both}
+@keyframes nf-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .sc-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
 .sc-title{font-weight:500;color:var(--white);letter-spacing:.06em}
 .sc-sev{font-size:9px;letter-spacing:.2em;color:var(--sc)}

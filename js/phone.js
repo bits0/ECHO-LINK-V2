@@ -4,7 +4,7 @@
 // ============================================================
 import { S, save, OBJECTIVES, objectiveDone, currentObjective, worldClock } from "./state.js";
 import { sfx } from "./audio.js";
-import { ACT0, beginChat, choose, revealDue, cascade } from "./act0.js";
+import { ACT0, beginChat, choose, revealDue, cascadeStream } from "./act0.js";
 
 let ctx = null;
 export function initPhone(c) { ctx = c; }
@@ -207,7 +207,7 @@ let cascadeArmed = false;
 function armCascade(ms) {
   if (cascadeArmed) return;
   cascadeArmed = true;
-  setTimeout(cascade, ms);
+  setTimeout(cascadeStream, ms);
 }
 
 // Reveal due beats at 250ms while the chat is on screen, 1Hz while it is not.

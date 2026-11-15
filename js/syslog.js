@@ -45,7 +45,7 @@ const h = (tag, cls, text) => {
 
 export function mountSyslogFeed(root, opts = {}) {
   const onSource = opts.onSource || (() => {});
-  let chip = "ALL", frozen = false, newCount = 0, lastLen = S.logs.length;
+  let chip = "ALL", frozen = false, newCount = 0, lastLen = S.logs.length, stick = true;
 
   root.innerHTML = `
     <div class="nf-head">
@@ -61,10 +61,22 @@ export function mountSyslogFeed(root, opts = {}) {
   const freezeBtn = root.querySelector("#nf-freeze");
   const newPill = root.querySelector("#nf-new");
 
+  // stick to the newest card only while the player is at the bottom
+  scroller.addEventListener("scroll", () => {
+    stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 40;
+    if (stick && !frozen) {
+      newCount = 0;
+      newPill.classList.add("hidden");
+    }
+  });
+
   const keep = log => chip === "ALL" ? true
     : chip === "CRIT" ? log.sev === "CRIT"
     : chip === "WARN+" ? log.sev !== "INFO"
     : log.payload && log.payload.layer === chip;
+
+  // an entry is new for one animation's worth of time after it lands
+  const isFresh = log => !!log.arrivedAt && Date.now() - log.arrivedAt < 400;
 
   function drawCounts() {
     const n = { INFO: 0, WARN: 0, CRIT: 0 };
@@ -80,6 +92,8 @@ export function mountSyslogFeed(root, opts = {}) {
 
   function cardFor(log) {
     const card = h("div", "sys-card " + log.sev.toLowerCase());
+    if (log.arrivedAt) card.dataset.arrivedAt = String(log.arrivedAt);
+    if (isFresh(log)) card.classList.add("is-new");
     const top = h("div", "sc-top");
     top.append(h("span", "sc-title", titleOf(log.message)), h("span", "sc-sev", log.sev));
     const meta = h("div", "sc-meta");
@@ -106,12 +120,16 @@ export function mountSyslogFeed(root, opts = {}) {
     const keepTop = scroller.scrollTop;
     drawCounts();
     list.replaceChildren(...S.logs.filter(keep).map(cardFor));
-    scroller.scrollTop = frozen ? keepTop : scroller.scrollHeight;
+    scroller.scrollTop = stick && !frozen ? scroller.scrollHeight : keepTop;
   }
 
   function tick() {
+    for (const card of list.querySelectorAll(".sys-card.is-new")) {
+      if (Date.now() - Number(card.dataset.arrivedAt) >= 400) card.classList.remove("is-new");
+    }
+    if (stick && !frozen) scroller.scrollTop = scroller.scrollHeight;
     if (S.logs.length === lastLen) return;
-    if (frozen) {
+    if (!stick || frozen) {
       newCount += S.logs.length - lastLen;
       newPill.textContent = `${newCount} NEW`;
       newPill.classList.remove("hidden");
@@ -122,6 +140,7 @@ export function mountSyslogFeed(root, opts = {}) {
 
   function unfreeze() {
     frozen = false;
+    stick = true;
     newCount = 0;
     freezeBtn.classList.remove("on");
     newPill.classList.add("hidden");
@@ -136,7 +155,13 @@ export function mountSyslogFeed(root, opts = {}) {
       newPill.classList.add("hidden");
     } else unfreeze();
   };
-  newPill.onclick = unfreeze;
+  newPill.onclick = () => {
+    if (frozen) return unfreeze();
+    stick = true;
+    newCount = 0;
+    newPill.classList.add("hidden");
+    scroller.scrollTop = scroller.scrollHeight;
+  };
 
   root.querySelector(".nf-chips").addEventListener("click", e => {
     const btn = e.target.closest(".nf-chip");

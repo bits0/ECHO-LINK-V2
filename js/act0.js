@@ -1,6 +1,6 @@
 // TEMPORARY — Act 0 board seed. Not derived from the simulator. Must be
 // replaced in Act 1 by topology-driven NetSpace. Do not copy this pattern.
-import { S } from "./state.js";
+import { S, save } from "./state.js";
 
 const n = (id, layer, physical, boot, after) =>
   ({ id, layer, physical, boot, after, state: boot, visibleAtBoot: layer !== "L0" });
@@ -171,6 +171,32 @@ export function cascade() {
   for (const node of S.nodes) if (node.after === "red") node.state = "red";
   S.cascadeDone = true;
   return { appended: 24 };
+}
+
+// The same block at wire speed: one line per step, and each device fails
+// as its own line lands. The feed animates entries via their arrivedAt.
+// Each gap is drawn independently so the chain is never re-entered.
+export function cascadeStream({ minDelay = 1000, maxDelay = 5000 } = {}) {
+  if (!S.act0 || S.cascadeDone || S.cascadeStreaming) return { started: false };
+  S.cascadeStreaming = true;
+  let slot = 0;
+  const gap = () => Math.round(minDelay + Math.random() * (maxDelay - minDelay));
+  const next = () => {
+    const entry = CASCADE_LOG[slot++];
+    S.logs.push({ ...structuredClone(entry), arrivedAt: Date.now() });
+    for (const node of S.nodes) {
+      if (node.after === "red" && node.id === entry.payload.device) node.state = "red";
+    }
+    if (slot >= CASCADE_LOG.length) {
+      S.cascadeDone = true;
+      S.cascadeStreaming = false;
+      save();
+      return;
+    }
+    setTimeout(next, gap());
+  };
+  setTimeout(next, gap());
+  return { started: true };
 }
 
 // ---------------- Act 0 chat: Rue's two sequences ----------------
