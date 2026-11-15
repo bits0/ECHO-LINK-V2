@@ -10,6 +10,7 @@ import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, rout
 import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
 import { nodeIconImage } from "./icons.js";
+import { seatConsoleLink, visibleNodes, nodeState, ACT0 } from "./act0.js";
 
 let ctx = null;
 let active = null;
@@ -752,6 +753,154 @@ function drawFacilityBuilding(g, W, H, canvas) {
   }
 }
 
+// ---------------- Act 0 board: facility status + console patch ----------------
+// TEMPORARY — the board is seeded from ACT0's node list, not the simulator.
+const ACT0_STATE_COL = { green:"#79c98d", red:"#c2554d" };
+let act0Hover = null;
+let act0PortSel = null;
+
+// One layout feeds the drawing and the hit-test, so they cannot disagree.
+function act0BoardLayout(W, H) {
+  const rows = ["L1", "L2", "L3"];
+  const conn = S.sessions["sw-l0"] && S.sessions["sw-l0"].state === "connected";
+  if (conn) rows.push("L0");
+  const vis = visibleNodes();
+  const x0 = 150, x1 = W - 90, y0 = 165, y1 = H - 200;
+  const rowH = (y1 - y0) / rows.length;
+  return rows.map((layer, i) => {
+    const items = vis.filter(node => node.layer === layer);
+    const gap = 14, bh = 44;
+    const bw = Math.min(200, (x1 - x0 - gap*(items.length-1)) / Math.max(1, items.length));
+    let x = x0 + (x1 - x0 - (items.length*bw + gap*(items.length-1)))/2;
+    const cy = y0 + rowH*i + rowH/2;
+    const boxes = items.map(node => {
+      const b = { node, x, y: cy - bh/2, w: bw, h: bh };
+      x += bw + gap;
+      return b;
+    });
+    return { layer, labelX: x0 - 26, labelY: cy, boxes };
+  });
+}
+
+function act0BoardHit(mx, my, W, H) {
+  for (const row of act0BoardLayout(W, H))
+    for (const b of row.boxes)
+      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) return b;
+  return null;
+}
+
+function drawAct0Board(canvas) {
+  const g = canvas.getContext("2d");
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  g.save();
+  g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  g.fillStyle = "rgba(9,12,16,.5)";
+  g.strokeStyle = "rgba(58,66,80,.9)";
+  g.lineWidth = 1;
+  g.beginPath(); g.roundRect(120, 118, W - 240, H - 300, 10); g.fill(); g.stroke();
+  g.textBaseline = "middle";
+  for (const row of act0BoardLayout(W, H)) {
+    g.font = "10px ui-monospace, monospace";
+    g.textAlign = "left";
+    g.fillStyle = "#5b6472";
+    g.fillText(row.layer, row.labelX, row.labelY);
+    for (const b of row.boxes) {
+      const on = b.node.id === act0Hover;
+      g.fillStyle = "rgba(18,21,27,.9)";
+      g.strokeStyle = on ? "#e8ebef" : "rgba(58,66,80,1)";
+      g.lineWidth = on ? 1.6 : 1;
+      g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill(); g.stroke();
+      g.fillStyle = ACT0_STATE_COL[nodeState(b.node)] || "#5b6472";
+      g.beginPath(); g.arc(b.x + 12, b.y + b.h/2, 3.4, 0, 7); g.fill();
+      g.font = `${Math.max(7, Math.min(10, (b.w - 30)/9))}px ui-monospace, monospace`;
+      g.fillStyle = "#b6bfca";
+      g.textAlign = "left";
+      g.fillText(b.node.id, b.x + 21, b.y + b.h/2);
+    }
+  }
+  g.restore();
+}
+
+function act0ConsoleLayout(W, H) {
+  const bw = Math.min(300, Math.max(210, W*0.2)), bh = 96;
+  const cy = Math.round(H * 0.46);
+  const left = { x: Math.round(W/2 - 80 - bw), y: cy - bh/2, w: bw, h: bh };
+  const right = { x: Math.round(W/2 + 80), y: cy - bh/2, w: bw, h: bh };
+  const bendX = left.x + left.w + 36, enterY = right.y + bh*0.72;
+  const lead = [
+    { x: left.x + left.w, y: left.y + bh/2 },
+    { x: bendX, y: left.y + bh/2 },
+    { x: bendX, y: enterY },
+    { x: right.x, y: enterY },
+  ];
+  return {
+    left, right, lead,
+    leftCaption: "L1-CON-SRV01 · console panel · unit 4",
+    rightCaption: "SW-L0 · console port",
+  };
+}
+
+function act0InBox(b, mx, my) {
+  return mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h;
+}
+
+function act0LeadNear(L, mx, my) {
+  for (let i = 1; i < L.lead.length; i++) {
+    const a = L.lead[i-1], b = L.lead[i];
+    const len = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const t = Math.max(0, Math.min(1, ((mx-a.x)*(b.x-a.x) + (my-a.y)*(b.y-a.y)) / (len*len)));
+    if (Math.hypot(mx - (a.x + (b.x-a.x)*t), my - (a.y + (b.y-a.y)*t)) <= 10) return true;
+  }
+  return false;
+}
+
+function drawAct0Console(canvas) {
+  const g = canvas.getContext("2d");
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  const L = act0ConsoleLayout(W, H);
+  const seated = !!S.consoleLinks["sw-l0"];
+  g.save();
+  g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  g.fillStyle = "rgba(9,12,16,.5)";
+  g.strokeStyle = "rgba(58,66,80,.9)";
+  g.lineWidth = 1;
+  g.beginPath(); g.roundRect(110, 120, W - 220, H - 320, 10); g.fill(); g.stroke();
+  g.font = "10px ui-monospace, monospace";
+  g.textAlign = "center";
+  g.fillStyle = "#5b6472";
+  g.fillText("CONSOLE PATCH — NOC RACK", W/2, 152);
+
+  if (seated) {
+    g.strokeStyle = "#e0a13e"; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(L.lead[0].x, L.lead[0].y);
+    for (const p of L.lead.slice(1)) g.lineTo(p.x, p.y);
+    g.stroke();
+    for (const p of [L.lead[0], L.lead[L.lead.length-1]]) {
+      g.fillStyle = "#e0a13e";
+      g.beginPath(); g.arc(p.x, p.y, 4, 0, 7); g.fill();
+    }
+  }
+
+  const port = (b, caption, chosen) => {
+    g.fillStyle = "rgba(18,21,27,.92)";
+    g.strokeStyle = chosen ? "#e0a13e" : "rgba(64,72,84,1)";
+    g.lineWidth = chosen ? 1.8 : 1.2;
+    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 8); g.fill(); g.stroke();
+    const cxm = b.x + b.w/2, cym = b.y + b.h/2 - 8;
+    g.strokeStyle = chosen ? "#e0a13e" : "#7a8392"; g.lineWidth = 1.4;
+    g.beginPath(); g.roundRect(cxm - 22, cym - 11, 44, 22, 4); g.stroke();
+    g.fillStyle = chosen ? "#e0a13e" : "#7a8392";
+    for (let k = 0; k < 4; k++) { g.beginPath(); g.arc(cxm - 15 + k*10, cym, 2, 0, 7); g.fill(); }
+    g.font = "9.5px ui-monospace, monospace";
+    g.textAlign = "center";
+    g.fillStyle = chosen ? "#e0a13e" : "#9aa4b2";
+    g.fillText(caption, b.x + b.w/2, b.y + b.h + 20);
+  };
+  port(L.left, L.leftCaption, act0PortSel === "left" && !seated);
+  port(L.right, L.rightCaption, false);
+  g.restore();
+}
+
 function drawCablingPlan(g, W, H, time, byName, hoveredPlan) {
   const C = S.cabling; if (!C) return;
   const F = previewFloor || activeScenario.floorplan;
@@ -992,6 +1141,10 @@ export function openNetspace(c) {
   selectedFacilityFloor = null;
   facZoom = 1;
   hoveredFacilityFloor = null;
+  act0Hover = null;
+  act0PortSel = null;
+  if (S.act0) nsMode = "virtual";   // Act 0 always opens on the board
+  const backLabel = S.act0 ? Object.keys(ACT0.devices)[0] : activeScenario.player;
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
@@ -1031,7 +1184,7 @@ export function openNetspace(c) {
       <div class="ns3d-dock">
         <button class="dock-item" id="ns-open-terminal"><span>&gt;_</span>TERMINAL</button>
         <button class="dock-item dock-primary"><span>◇</span>NETWORK SPACE</button>
-        <button class="dock-item" id="ns-back-desktop"><span>⌂</span>PC-C</button>
+        <button class="dock-item" id="ns-back-desktop"><span>⌂</span>${backLabel}</button>
         <button class="dock-item" id="ns-step-away"><span>⏏</span>STEP AWAY</button>
       </div>
     </div>`;
@@ -1047,6 +1200,7 @@ export function openNetspace(c) {
   let hovered = null;
   let hoveredLink = null;
   let hoveredPlan = null;
+  let act0Selected = null;
   let lastTime = performance.now();
   let lastReadout = "";
 
@@ -1068,10 +1222,14 @@ export function openNetspace(c) {
     g.setTransform(1,0,0,1,0,0); g.clearRect(0,0,canvas.width,canvas.height);
     g.save(); g.scale(devicePixelRatio,devicePixelRatio);
 
-    const view=netspaceView();
+    const view = S.act0 ? [] : netspaceView();
     const byName=Object.fromEntries(view.map(v=>[v.name,v]));
 
-    if (nsMode === "physical") {
+    if (S.act0) {
+      t2Grid(g, W, H);
+      if (nsMode === "physical") drawAct0Console(canvas);
+      else drawAct0Board(canvas);
+    } else if (nsMode === "physical") {
       // the physical layer — the building sheet, or the whole building
       t2Grid(g, W, H);
       if (physView === "building") drawFacilityBuilding(g, W, H, canvas);
@@ -1085,7 +1243,19 @@ export function openNetspace(c) {
     }
 
     let text;
-    if (nsMode === "physical") {
+    if (S.act0) {
+      if (nsMode === "physical") {
+        text = S.consoleLinks["sw-l0"]
+          ? "CONSOLE PATCH — LEAD SEATED · CLICK THE LEAD FOR ITS STATUS"
+          : act0PortSel === "left" ? "L1-CON-SRV01 SELECTED — CLICK SW-L0"
+          : "CONSOLE PATCH — CLICK L1-CON-SRV01, THEN SW-L0";
+      } else if (act0Selected) {
+        const node = S.nodes.find(item => item.id === act0Selected);
+        text = `${node.id} · ${node.physical} · ${nodeState(node)}`;
+      } else {
+        text = `FACILITY STATUS — ${visibleNodes().length} NODES IN VIEW · CLICK A NODE`;
+      }
+    } else if (nsMode === "physical") {
       if (physView === "building") {
         const sheets = FACILITY.floors.filter(f => f.sheet).length;
         text = `${FACILITY.title} — ${FACILITY.floors.length} FLOORS · ${sheets} SHEET ON FILE · SELECT A FLOOR`;
@@ -1168,14 +1338,61 @@ export function openNetspace(c) {
     tip.style.top = Math.max(18, my - 16) + "px";
   }
 
+  // Act 0: the board answers hovers and clicks; the sheet answers ports
+  function act0Move(e) {
+    const r = canvas.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    if (nsMode === "physical") {
+      const L = act0ConsoleLayout(W, H);
+      const onLead = S.consoleLinks["sw-l0"] && act0LeadNear(L, mx, my);
+      canvas.style.cursor = act0InBox(L.left, mx, my) || act0InBox(L.right, mx, my) || onLead ? "pointer" : "";
+      tip.classList.add("hidden");
+      return;
+    }
+    const hit = act0BoardHit(mx, my, W, H);
+    act0Hover = hit ? hit.node.id : null;
+    canvas.style.cursor = hit ? "pointer" : "";
+    if (!hit) { tip.classList.add("hidden"); return; }
+    tip.innerHTML = `<b>${hit.node.id}</b><br/>${hit.node.physical}`;
+    tip.classList.remove("hidden");
+    tip.style.left = Math.min(mx + 18, W - 240) + "px";
+    tip.style.top = Math.max(18, my - 16) + "px";
+  }
+
+  function act0Click(mx, my) {
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    tip.classList.add("hidden");
+    if (nsMode === "physical") {
+      const L = act0ConsoleLayout(W, H);
+      if (S.consoleLinks["sw-l0"] && act0LeadNear(L, mx, my)) {
+        ctx.toast("console lead is seated", "amber");
+        return;
+      }
+      if (!S.consoleLinks["sw-l0"] && act0InBox(L.left, mx, my)) { act0PortSel = "left"; return; }
+      if (!S.consoleLinks["sw-l0"] && act0PortSel === "left" && act0InBox(L.right, mx, my)) {
+        seatConsoleLink();
+        act0PortSel = null;
+        return;
+      }
+      act0PortSel = null;
+      ctx.toast("no console port there", "amber");
+      return;
+    }
+    const hit = act0BoardHit(mx, my, W, H);
+    if (hit) act0Selected = hit.node.id;
+  }
+
   // both modes: drag to pan, wheel to zoom, click to inspect
   let drag = null;
   canvas.addEventListener("pointerdown", e => {
+    if (S.act0) { drag = { x:e.clientX, y:e.clientY, moved:0 }; return; }
     drag = { x:e.clientX, y:e.clientY, moved:0 };
     canvas.setPointerCapture(e.pointerId);
     shell.classList.add("ns-panning");
   });
   canvas.addEventListener("pointermove", e => {
+    if (S.act0) return act0Move(e);
     if (drag) {
       if (nsMode === "physical" && physView === "building") return;   // fixed projection
       const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
@@ -1192,9 +1409,14 @@ export function openNetspace(c) {
   canvas.addEventListener("pointerup", e => {
     if (!drag) return;
     shell.classList.remove("ns-panning");
+    const r=canvas.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    if (S.act0) {
+      if (drag.moved < 6) act0Click(mx, my);
+      drag = null;
+      return;
+    }
     if (drag.moved < 6) {
-      const r=canvas.getBoundingClientRect();
-      const mx=e.clientX-r.left, my=e.clientY-r.top;
       if (nsMode === "physical" && physView === "building") {
         const floor = hoveredFacilityFloor;
         if (floor && floor.sheet) switchView(() => showFacilityFloor(floor));   // same path as the cards
@@ -1216,6 +1438,7 @@ export function openNetspace(c) {
   canvas.addEventListener("pointercancel", () => { drag=null; shell.classList.remove("ns-panning"); });
   canvas.addEventListener("wheel", e => {
     e.preventDefault();
+    if (S.act0) return;
     if (nsMode === "physical" && physView === "building") {
       setFacZoom(facZoom * (e.deltaY < 0 ? 1.15 : 1/1.15));
       return;
@@ -1226,6 +1449,7 @@ export function openNetspace(c) {
   canvas.addEventListener("mouseleave",()=>{
     hovered=null;hoveredPlan=null;tip.classList.add("hidden");
     hoveredFacilityFloor=null; canvas.dataset.facHover=""; canvas.style.cursor="";
+    if (S.act0) act0Hover = null;
   });
 
   const inBuilding = () => nsMode === "physical" && physView === "building";
@@ -1265,6 +1489,13 @@ export function openNetspace(c) {
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
 
   function renderChrome() {
+    if (S.act0) {
+      headSeg.textContent = "ACT 0 — FACILITY STATUS";
+      crumb.classList.add("hidden");
+      facPanel.classList.add("hidden");
+      zoomBar.style.display = "none";
+      return;
+    }
     const building = physView === "building";
     const ctx = building ? `${FACILITY.title} · FACILITY MAP`
                          : previewFloor ? sheetLabel(previewFloor) : "F1 — OFFICE";
@@ -1349,8 +1580,16 @@ export function openNetspace(c) {
     hoveredPlan = null;
     mVirtual.classList.toggle("on", m === "virtual");
     mPhysical.classList.toggle("on", m === "physical");
-    legend.classList.toggle("hidden", m !== "virtual");
     canvas.classList.add("ns-can-pan");
+    if (S.act0) {
+      legend.classList.add("hidden");
+      note.textContent = m === "physical"
+        ? "PHYSICAL — CONSOLE PATCH · OUT-OF-BAND ACCESS"
+        : "VIRTUAL — FACILITY STATUS · CLICK A NODE";
+      renderChrome();
+      return;
+    }
+    legend.classList.toggle("hidden", m !== "virtual");
     note.textContent = m === "physical"
       ? "PHYSICAL MODE — THE PHYSICAL PLANT · DASHED = IN THE WALLS · HOVER TO TRACE A RUN"
       : "A VIEW, NOT THE WHOLE TRUTH · VERIFY BY PING";

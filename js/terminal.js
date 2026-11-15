@@ -6,7 +6,9 @@ import { ping, ipconfig, helpText } from "./net.js";
 import { sfx } from "./audio.js";
 import { S, save } from "./state.js";
 import { activeScenario } from "./scenario.js";
-import { openSession, closeSession } from "./act0.js";
+import { openSession, closeSession, cascade } from "./act0.js";
+
+let cascadeArmed = false;   // one trigger per Act 0 boot
 
 // host = the machine this terminal belongs to; PC-C unless told otherwise.
 export function openTerminal(body, ctx, host = activeScenario.player) {
@@ -53,6 +55,11 @@ export function openTerminal(body, ctx, host = activeScenario.player) {
     const cmd = raw.trim();
     print([{ text:`${prompt} ${cmd}`, cls:"t-white" }]);
     if (!cmd) return;
+    if (S.act0 && !cascadeArmed) {
+      cascadeArmed = true;
+      // TEMPORARY_TRIGGER — 10c moves this to the s1-02 phone commit.
+      setTimeout(cascade, 8000);
+    }
     const [c, ...args] = cmd.split(/\s+/);
     const target = args[0];
 
@@ -76,6 +83,7 @@ export function openTerminal(body, ctx, host = activeScenario.player) {
         }
         const res = (verb === "open" ? openSession : closeSession)(sessTarget);
         print(res.lines.map(text => ({ text, cls: text.startsWith("no ") ? "t-dim" : "t-green" })));
+        if (res.awarded) print([{ text:"Stability +2", cls:"t-green" }]);
         save();
         break;
       }

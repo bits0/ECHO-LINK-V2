@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { S, resetState } from "../js/state.js";
 import {
-  ACT0, bootAct0, clockNow,
+  ACT0, bootAct0, clockNow, cascade, visibleNodes, nodeState,
   openSession, closeSession, seatConsoleLink, pinLog, removePin,
 } from "../js/act0.js";
 
@@ -119,4 +119,75 @@ test("(i) the SOP ships one console-access page", () => {
   assert.equal(S.sop.length, 1);
   assert.equal(S.sop[0].id, "console-access");
   assert.ok(S.sop[0].body.includes("Console sessions do not use the network"));
+});
+
+test("(j) cascade appends 24 lines in slot order", () => {
+  boot();
+  const r = cascade();
+  assert.equal(r.appended, 24);
+  assert.equal(S.logs.length, 36);
+  assert.equal(S.logs[12].ts, "02:13:59.402");
+  assert.equal(S.logs[35].message, "clock resync from ntp: +0.000s");
+});
+
+test("(k) the anomaly keeps its slot, not its time", () => {
+  boot();
+  cascade();
+  const i = S.logs.findIndex(l => l.ts === "02:13:58.771");
+  assert.equal(i, 23);
+  assert.ok(S.logs[22].ts > S.logs[23].ts, "the entry before it has a later timestamp");
+  assert.ok(S.logs[24].ts > S.logs[23].ts, "the entry after it has a later timestamp");
+});
+
+test("(l) cascade is idempotent", () => {
+  boot();
+  cascade();
+  assert.deepEqual(cascade(), { appended: 0 });
+  assert.equal(S.logs.length, 36);
+});
+
+test("(m) cascade reds seven nodes and leaves L0 hidden", () => {
+  boot();
+  cascade();
+  const vis = visibleNodes();
+  assert.equal(vis.length, 11);
+  assert.equal(vis.filter(n => nodeState(n) === "red").length, 7);
+  assert.equal(vis.filter(n => nodeState(n) === "green").length, 4);
+  assert.equal(vis.some(n => n.layer === "L0"), false);
+  assert.equal(S.nodes.filter(n => n.layer === "L0" && n.visibleAtBoot === false).length, 10);
+});
+
+test("(n) stability is awarded once, on the first connect", () => {
+  boot();
+  seatConsoleLink();
+  const first = openSession("sw-l0");
+  assert.equal(first.awarded, true);
+  assert.equal(S.stability.perScenario.act0, 2);
+  assert.equal(S.stability.total, 2);
+  const second = openSession("sw-l0");
+  assert.equal(second.awarded, false);
+  assert.equal(S.stability.total, 2);
+});
+
+test("(o) L0 appears only with a connected session; one green", () => {
+  boot();
+  assert.equal(visibleNodes().filter(n => n.layer === "L0").length, 0);
+  seatConsoleLink();
+  openSession("sw-l0");
+  const l0 = visibleNodes().filter(n => n.layer === "L0");
+  assert.equal(l0.length, 10);
+  assert.equal(l0.filter(n => nodeState(n) === "green").length, 1);
+  assert.equal(nodeState(l0.find(n => n.id === "L0-SW-ACC01")), "green");
+  closeSession("sw-l0");
+  assert.equal(visibleNodes().filter(n => n.layer === "L0").length, 0);
+});
+
+test("(p) an unrelated log does not cancel the cascade", () => {
+  boot();
+  seatConsoleLink();                    // logs === 13 before the cascade
+  const r = cascade();
+  assert.equal(r.appended, 24);
+  assert.equal(S.logs.length, 37);
+  assert.equal(S.cascadeDone, true);
+  assert.equal(cascade().appended, 0);  // still idempotent
 });

@@ -3,7 +3,7 @@
 import { S } from "./state.js";
 
 const n = (id, layer, physical, boot, after) =>
-  ({ id, layer, physical, boot, after, visibleAtBoot: layer !== "L0" });
+  ({ id, layer, physical, boot, after, state: boot, visibleAtBoot: layer !== "L0" });
 
 export const ACT0 = {
   id: "act0",
@@ -75,6 +75,57 @@ export function bootAct0() {
   S.sop = structuredClone(ACT0.sop);
   S.sessions = {};
   S.consoleLinks = {};
+  S.cascadeDone = false;
+}
+
+// Slot order is the story: slot 12 is an anomaly whose timestamp predates
+// the eleven slots before it. Never sort this by ts.
+export const CASCADE_LOG = [
+  { ts:"02:13:59.402", device:"L1-SRV-SYSLOG01", message:"heartbeat interval drift +40ms" },
+  { ts:"02:13:59.887", device:"L1-SW-DIST01",    message:"mgmt link to L1-RTR-LOC01: no carrier" },
+  { ts:"02:14:00.001", device:"L1-RTR-LOC01",    message:"interface gi0/1 admin up, line protocol down" },
+  { ts:"02:14:00.002", device:"L1-SW-DIST01",    message:"uplink to L1-RTR-LOC01 down" },
+  { ts:"02:14:00.004", device:"L1-SRV-SYSLOG01", message:"heartbeat lost" },
+  { ts:"02:14:00.007", device:"L2-SW-ACC01",     message:"trunk to L1-SW-DIST01 down" },
+  { ts:"02:14:00.009", device:"L2-SW-ACC02",     message:"trunk to L1-SW-DIST01 down" },
+  { ts:"02:14:00.011", device:"L3-SW-CORE01",    message:"trunk to L2-SW-ACC01 down" },
+  { ts:"02:14:00.014", device:"L3-SW-CORE01",    message:"trunk to L2-SW-ACC02 down" },
+  { ts:"02:14:00.016", device:"L3-SRV-ARCH01",   message:"iscsi session to L3-SAN-01 reset" },
+  { ts:"02:14:00.018", device:"L3-SAN-01",       message:"fabric login lost" },
+  { ts:"02:13:58.771", device:"L0-SW-ACC01",     message:"link down" },
+  { ts:"02:14:00.019", device:"L0-RTR-EDGE01",   message:"unreachable" },
+  { ts:"02:14:00.021", device:"L0-SW-ACC01",     message:"link up" },
+  { ts:"02:14:00.023", device:"L0-NVR-01",       message:"camera feed lost: CAM-01 CAM-02 CAM-03 CAM-04" },
+  { ts:"02:14:00.026", device:"L0-ACS-01",       message:"door bus offline" },
+  { ts:"02:14:00.028", device:"L0-WS-HR01",      message:"dhcp lease renewal failed" },
+  { ts:"02:14:00.031", device:"L0-WS-FIN01",     message:"dhcp lease renewal failed" },
+  { ts:"02:14:00.033", device:"L1-SW-DIST01",    message:"stp topology change" },
+  { ts:"02:14:00.036", device:"L2-SW-ACC01",     message:"stp topology change" },
+  { ts:"02:14:00.038", device:"L3-SW-CORE01",    message:"stp topology change" },
+  { ts:"02:14:00.041", device:"L1-SRV-SYSLOG01", message:"log ingest backlog 312 events" },
+  { ts:"02:14:00.044", device:"L1-SRV-SYSLOG01", message:"log ingest backlog 1184 events" },
+  { ts:"02:14:00.047", device:"L1-SRV-SYSLOG01", message:"clock resync from ntp: +0.000s" },
+];
+
+export function cascade() {
+  if (!S.act0 || S.cascadeDone) return { appended: 0 };
+  S.logs.push(...structuredClone(CASCADE_LOG));
+  for (const node of S.nodes) if (node.after === "red") node.state = "red";
+  S.cascadeDone = true;
+  return { appended: 24 };
+}
+
+const consulting = () => S.sessions["sw-l0"] && S.sessions["sw-l0"].state === "connected";
+
+export function visibleNodes() {
+  const live = consulting();
+  return S.nodes.filter(node => node.visibleAtBoot || (node.layer === "L0" && live));
+}
+
+// The console lead is the live run: SW-L0 answers green, the rest of L0 is dead.
+export function nodeState(node) {
+  if (node.layer === "L0" && consulting()) return node.id === "L0-SW-ACC01" ? "green" : "red";
+  return node.state;
 }
 
 export function clockNow() {
@@ -87,12 +138,18 @@ export function clockNow() {
 
 export function openSession(target) {
   const link = S.consoleLinks[target];
-  if (!link) return { lines: [`no console path to ${target}`], state: "disconnected" };
+  if (!link) return { lines: [`no console path to ${target}`], state: "disconnected", awarded: false };
   const cur = S.sessions[target];
+  let awarded = false;
   if (!cur || cur.state !== "connected") {
     S.sessions[target] = { state:"connected", openedAt: Date.now() };
+    if (S.stability.perScenario.act0 == null) {
+      S.stability.perScenario.act0 = 2;
+      S.stability.total += 2;
+      awarded = true;
+    }
   }
-  return { lines: [`opening console to ${target}...`, `connected to ${link.to}`], state: "connected" };
+  return { lines: [`opening console to ${target}...`, `connected to ${link.to}`], state: "connected", awarded };
 }
 
 export function closeSession(target) {

@@ -41,6 +41,7 @@ export function freshState() {
     notepad:"",
     sop:[],                        // [{ id, title, body }]
     stability:{ total:0, perScenario:{} },
+    cascadeDone:false,
     clockStart:null,               // "HH:MM(:SS)" from the active scenario; null = 21:47
   };
 }

@@ -46,7 +46,9 @@ export function openDesktop(opts = {}) {
       <div class="workspace-home" id="workspace-home">
         <div class="ws-kicker">ECHO//LINK FIELD SHELL</div>
         <div class="ws-title">LOCAL WORKSPACE</div>
-        <div class="ws-copy">Observe the topology, test from the terminal, then return to the physical room.</div>
+        <div class="ws-copy">${S.act0
+          ? "Read the log. The console is the only path left."
+          : "Observe the topology, test from the terminal, then return to the physical room."}</div>
         ${isPlayer && !S.netspaceSeen ? `<div class="ws-new">◈ NETWORK SPACE AVAILABLE</div>` : ""}
       </div>
       <div class="desk-dock">
@@ -78,7 +80,7 @@ export function openDesktop(opts = {}) {
   const ns = el("dock-netspace");
   if (ns) ns.onclick = () => {
     sfx.click();
-    if (S.act0) { ctx.toast("Network Space is not available in Act 0.", "amber"); return; }
+    if (S.act0) { openNetspace(ctx); return; }
     const first = !S.netspaceSeen;
     S.netspaceSeen = true; save();
     openNetspace(ctx);
