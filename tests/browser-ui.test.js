@@ -667,6 +667,127 @@ test("syslog — scrollback holds, and the wave keeps its own pace", async () =>
   }
 });
 
+test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+
+    await page.goto(url);
+    await page.click("#btn-act0");
+    await page.waitForSelector("#dock-netspace");
+    await page.click("#dock-netspace");
+    await page.waitForSelector("#ns-mode-syslog");
+
+    const canvasBox = await page.locator("#netspace-canvas").boundingBox();
+    const data = key => page.evaluate(k => JSON.parse(document.querySelector("#netspace-canvas").dataset[k]), key);
+    const clickAt = (x, y) => page.mouse.click(canvasBox.x + x, canvasBox.y + y);
+    const clickNode = async id => {
+      const b = (await data("act0Boxes"))[id];
+      await clickAt(b.x + b.w/2, b.y + b.h/2);
+      await page.waitForTimeout(120);
+    };
+    await page.waitForFunction(() => !!document.querySelector("#netspace-canvas").dataset.act0Boxes);
+
+    // (a) kinds are derived for every node, and several kinds are in play
+    const kinds = await data("act0Kinds");
+    const distinct = [...new Set(Object.values(kinds))];
+    assert.equal(Object.keys(kinds).length, 21, "(a) kinds cover all 21 nodes");
+    assert.ok(distinct.length >= 6, `(a) at least six kinds (${distinct.join(", ")})`);
+    for (const k of ["switch", "router", "server", "camera", "storage"])
+      assert.ok(distinct.includes(k), `(a) ${k} is derived`);
+    assert.deepEqual(new Set(distinct), new Set(distinct.filter(k =>
+      ["switch","router","server","workstation","console","ups","nvr","acs","storage","camera","generic"].includes(k))),
+      new Set(distinct), "(a) no kind invented outside the mapping");
+    const nodes = await page.evaluate(() => import("/js/state.js").then(m => m.S.nodes.length));
+    assert.equal(nodes, 21, "NEGATIVE — the roster is untouched");
+
+    // the cascade lands; the board's state dots and the card read the same data
+    await page.evaluate(() => import("/js/act0.js").then(m => m.cascade()));
+    await page.waitForTimeout(150);
+
+    // (b) clicking L1-SW-DIST01 opens a card tied to its own newest line
+    await clickNode("L1-SW-DIST01");
+    assert.equal(await page.locator("#ns-card.hidden").count(), 0, "(b) the card is open");
+    assert.equal(await txt(page.locator("#nsc-kind")), "SWITCH");
+    assert.equal(await txt(page.locator("#nsc-name")), "L1-SW-DIST01");
+    assert.equal(await txt(page.locator("#nsc-state")), "RED", "(b) the card follows the cascade");
+    assert.equal(await txt(page.locator("#nsc-layer")), "L1 — OPERATIONS");
+    assert.equal(await txt(page.locator("#nsc-physical")), "distribution switch");
+    assert.match(await txt(page.locator("#nsc-last")), /^02:14:00\.033 · stp topology change$/, "(b) LAST EVENT is its own newest entry");
+    // the same mechanism yields each device's own newest line (ordered, not sorted)
+    await clickNode("L3-SW-CORE01");
+    assert.equal(await txt(page.locator("#nsc-name")), "L3-SW-CORE01", "another node replaces the card");
+    assert.equal(await txt(page.locator("#nsc-last")), "02:14:00.038 · stp topology change");
+
+    // the card sits below the mode buttons and never covers them
+    const cardBox = await page.locator("#ns-card").boundingBox();
+    const modeBox = await page.locator(".ns3d-modes").boundingBox();
+    assert.ok(cardBox.y >= modeBox.y + modeBox.height, "the card starts below the mode row");
+    assert.ok(cardBox.x + cardBox.width <= 1280, "the card is docked inside the map");
+    const modeHit = await page.evaluate(([x, y]) => {
+      const el = document.elementFromPoint(x, y);
+      return !!el && !!el.closest(".ns3d-modes");
+    }, [modeBox.x + modeBox.width/2, modeBox.y + modeBox.height/2]);
+    assert.equal(modeHit, true, "the mode buttons stay on top");
+
+    // (d) Escape closes the card; the board remains
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("#ns-card.hidden").count(), 1, "(d) Escape closes the card");
+    assert.equal(await page.locator("#ns-mode-virtual.on").count(), 1, "(d) the board remains");
+    assert.equal(await page.evaluate(() => !!document.querySelector("#netspace-canvas").dataset.act0Boxes), true);
+
+    // (c) SHOW IN FEED switches to SYSLOG filtered to that device
+    await clickNode("L1-SW-DIST01");
+    await page.click("#nsc-show");
+    assert.equal(await page.locator("#ns-mode-syslog.on").count(), 1, "(c) SHOW IN FEED opens SYSLOG");
+    assert.equal(await page.locator("#ns-card.hidden").count(), 1, "the feed is not covered by the card");
+    await page.waitForTimeout(200);
+    const sources = await page.locator(".sys-card .sys-src").allInnerTexts();
+    assert.ok(sources.length > 0, "(c) the filtered feed has cards");
+    assert.ok(sources.every(s => s === "L1-SW-DIST01"), "(c) every visible card is the device's own");
+    assert.equal(await txt(page.locator(".nf-device")), "L1-SW-DIST01 ×", "(c) the device chip is shown");
+    const filteredCounts = await page.evaluate(() =>
+      ["nf-i", "nf-w", "nf-c"].map(c => Number(document.querySelector(`#nf-counts .${c}`).textContent.split(" ")[1])));
+    assert.deepEqual(filteredCounts, [1, 1, 2], "(c) counters reflect what is displayed");
+    assert.match(await txt(page.locator("#nf-counts")), /SHOWING 4\/36/, "(c) the header says it is filtered");
+    await page.click(".nf-device");
+    assert.equal(await page.locator(".sys-card").count(), 36, "(c) the device chip clears the filter");
+    assert.equal(await page.locator(".nf-device").count(), 0, "(c) the chip is gone");
+    const cleared = await page.evaluate(() =>
+      ["nf-i", "nf-w", "nf-c"].map(c => Number(document.querySelector(`#nf-counts .${c}`).textContent.split(" ")[1])));
+    assert.deepEqual(cleared, [14, 6, 16], "(c) the counters return to the whole feed");
+
+    // (e) the bench: three-unit rack, same click-then-click seating, one log line
+    await page.click("#ns-mode-physical");
+    await page.waitForFunction(() => !!document.querySelector("#netspace-canvas").dataset.act0Bench);
+    const bench = await data("act0Bench");
+    await clickAt(bench.left.x + bench.left.w/2, bench.left.y + bench.left.h/2);
+    await clickAt(bench.right.x + bench.right.w/2, bench.right.y + bench.right.h/2);
+    await page.waitForTimeout(120);
+    const seatedLogs = () => page.evaluate(() =>
+      import("/js/state.js").then(m => m.S.logs.filter(l => l.message.includes("console lead seated")).length));
+    assert.equal(await seatedLogs(), 1, "(e) exactly one console-lead log line");
+    await clickAt(bench.lead.x, bench.lead.y);
+    assert.equal(await txt(page.locator("#toast")), "console lead is seated", "(e) the lead is drawn and answers the single-use toast");
+    await clickAt(bench.right.x + bench.right.w/2, bench.right.y + bench.right.h/2);
+    assert.equal(await seatedLogs(), 1, "(e) the lead cannot be seated twice");
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
+
 test("shell dock — one dock, three states, one surface", async () => {
   const server = await startServer();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;

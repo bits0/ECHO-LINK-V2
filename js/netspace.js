@@ -757,10 +757,22 @@ function drawFacilityBuilding(g, W, H, canvas) {
 // ---------------- Act 0 board: facility status + console patch ----------------
 // TEMPORARY — the board is seeded from ACT0's node list, not the simulator.
 const ACT0_STATE_COL = { green:"#79c98d", red:"#c2554d" };
+const ACT0_LAYER_LABEL = { L1:"L1 — OPERATIONS", L2:"L2 — LABS", L3:"L3 — CORE", L0:"L0 — SURFACE" };
 let act0Hover = null;
 let act0PortSel = null;
 let act0Pulse = null;              // node id ringed after a source click
 let act0PulseUntil = 0;            // the ring fades out by this time
+
+// Kinds are derived from the codename's own structure, never styled per id,
+// so a device invented in a later act still lands on a sane glyph.
+const ACT0_KIND_RULES = [
+  ["-SW-", "switch"], ["-RTR-", "router"], ["-SRV-", "server"], ["-WS-", "workstation"],
+  ["-CON-", "console"], ["-UPS-", "ups"], ["-NVR-", "nvr"], ["-ACS-", "acs"], ["-SAN-", "storage"],
+];
+function kindOf(id) {
+  for (const [needle, kind] of ACT0_KIND_RULES) if (id.includes(needle)) return kind;
+  return id.startsWith("CAM-") ? "camera" : "generic";
+}
 
 // One layout feeds the drawing and the hit-test, so they cannot disagree.
 function act0BoardLayout(W, H) {
@@ -768,21 +780,90 @@ function act0BoardLayout(W, H) {
   const conn = S.sessions["sw-l0"] && S.sessions["sw-l0"].state === "connected";
   if (conn) rows.push("L0");
   const vis = visibleNodes();
-  const x0 = 150, x1 = W - 90, y0 = 165, y1 = H - 200;
+  const x0 = 136, x1 = W - 136, y0 = 150, y1 = H - 210;
   const rowH = (y1 - y0) / rows.length;
   return rows.map((layer, i) => {
     const items = vis.filter(node => node.layer === layer);
-    const gap = 14, bh = 44;
-    const bw = Math.min(200, (x1 - x0 - gap*(items.length-1)) / Math.max(1, items.length));
+    const gap = 14, bh = 54;
+    const bw = Math.min(158, (x1 - x0 - gap*(items.length-1)) / Math.max(1, items.length));
     let x = x0 + (x1 - x0 - (items.length*bw + gap*(items.length-1)))/2;
-    const cy = y0 + rowH*i + rowH/2;
+    const bandY = y0 + rowH*i, ruleY = bandY + 22;
+    const cy = ruleY + Math.max(bh/2 + 6, (rowH - 22)/2);
     const boxes = items.map(node => {
       const b = { node, x, y: cy - bh/2, w: bw, h: bh };
       x += bw + gap;
       return b;
     });
-    return { layer, labelX: x0 - 26, labelY: cy, boxes };
+    return { layer, label: ACT0_LAYER_LABEL[layer], bandY, ruleY, boxes };
   });
+}
+
+// 26x26 glyph box, drawn from primitives so every kind shares one weight.
+function drawKindGlyph(g, kind, ox, oy) {
+  g.save();
+  g.translate(ox, oy);
+  g.strokeStyle = "#7a8392"; g.fillStyle = "#7a8392"; g.lineWidth = 1.2;
+  switch (kind) {
+    case "switch":
+      g.beginPath(); g.roundRect(2, 8, 22, 9, 2); g.stroke();
+      for (let k = 0; k < 8; k++) {
+        const tx = 4.5 + k*2.4;
+        g.beginPath(); g.moveTo(tx, 17); g.lineTo(tx, 19.5); g.stroke();
+      }
+      break;
+    case "router":
+      g.beginPath(); g.arc(13, 13, 7.5, 0, 7); g.stroke();
+      for (let k = 0; k < 4; k++) {
+        const a = Math.PI/4 + k*Math.PI/2;
+        g.beginPath();
+        g.moveTo(13 + Math.cos(a)*3, 13 + Math.sin(a)*3);
+        g.lineTo(13 + Math.cos(a)*9.5, 13 + Math.sin(a)*9.5);
+        g.stroke();
+      }
+      break;
+    case "server":
+      g.strokeRect(5, 3, 16, 20);
+      for (let k = 0; k < 3; k++) { g.beginPath(); g.moveTo(8, 8+k*5); g.lineTo(18, 8+k*5); g.stroke(); }
+      g.beginPath(); g.arc(17.5, 20, 1.6, 0, 7); g.fill();
+      break;
+    case "workstation":
+      g.strokeRect(4, 4, 18, 12);
+      g.beginPath();
+      g.moveTo(10, 16); g.lineTo(10, 20); g.moveTo(16, 16); g.lineTo(16, 20);
+      g.moveTo(8.5, 20.5); g.lineTo(17.5, 20.5); g.stroke();
+      break;
+    case "console":
+      g.strokeRect(3, 5, 20, 13);
+      for (let k = 0; k < 3; k++) { g.beginPath(); g.arc(8 + k*5, 17.5, 1.4, 0, 7); g.fill(); }
+      g.font = "5px ui-monospace, monospace"; g.textAlign = "left"; g.fillText("OOB", 4.5, 9);
+      break;
+    case "ups":
+      g.strokeRect(5, 3, 16, 20);
+      g.strokeRect(8, 1, 3, 3); g.strokeRect(15, 1, 3, 3);
+      for (let k = 0; k < 3; k++) g.fillRect(8, 10+k*4, 10 - k*3, 2.4);
+      break;
+    case "nvr":
+      g.strokeRect(3, 6, 20, 14);
+      g.beginPath(); g.arc(12, 13, 4.5, 0, 7); g.stroke();
+      g.beginPath(); g.arc(18.5, 9, 1.4, 0, 7); g.fill();
+      break;
+    case "acs":
+      g.beginPath();
+      g.moveTo(13, 3); g.lineTo(21, 6); g.lineTo(21, 13);
+      g.quadraticCurveTo(21, 19, 13, 23); g.quadraticCurveTo(5, 19, 5, 13);
+      g.lineTo(5, 6); g.closePath(); g.stroke();
+      break;
+    case "storage":
+      for (let k = 0; k < 3; k++) { g.beginPath(); g.roundRect(3, 4 + k*7, 20, 5, 1.5); g.stroke(); }
+      break;
+    case "camera":
+      g.beginPath(); g.arc(12, 14, 6.5, 0, 7); g.stroke();
+      g.beginPath(); g.moveTo(15, 6); g.lineTo(23, 9); g.lineTo(15, 11); g.closePath(); g.stroke();
+      break;
+    default:
+      g.strokeRect(5, 5, 16, 16);
+  }
+  g.restore();
 }
 
 function act0BoardHit(mx, my, W, H) {
@@ -795,6 +876,7 @@ function act0BoardHit(mx, my, W, H) {
 function drawAct0Board(canvas) {
   const g = canvas.getContext("2d");
   const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.dataset.act0Kinds = JSON.stringify(Object.fromEntries(S.nodes.map(node => [node.id, kindOf(node.id)])));
   if (act0Pulse && performance.now() >= act0PulseUntil) {
     act0Pulse = null;
     delete canvas.dataset.act0Pulse;
@@ -806,27 +888,34 @@ function drawAct0Board(canvas) {
   g.lineWidth = 1;
   g.beginPath(); g.roundRect(120, 118, W - 240, H - 300, 10); g.fill(); g.stroke();
   g.textBaseline = "middle";
-  for (const row of act0BoardLayout(W, H)) {
-    g.font = "10px ui-monospace, monospace";
+  const layout = act0BoardLayout(W, H);
+  canvas.dataset.act0Boxes = JSON.stringify(Object.fromEntries(
+    layout.flatMap(row => row.boxes).map(b =>
+      [b.node.id, { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) }])));
+  for (const row of layout) {
+    g.font = "9px ui-monospace, monospace";
     g.textAlign = "left";
     g.fillStyle = "#5b6472";
-    g.fillText(row.layer, row.labelX, row.labelY);
+    g.fillText(row.label, 136, row.bandY + 12);
+    g.strokeStyle = "rgba(58,66,80,.65)"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(136, row.ruleY); g.lineTo(W - 136, row.ruleY); g.stroke();
     for (const b of row.boxes) {
       const on = b.node.id === act0Hover;
       g.fillStyle = "rgba(18,21,27,.9)";
       g.strokeStyle = on ? "#e8ebef" : "rgba(58,66,80,1)";
       g.lineWidth = on ? 1.6 : 1;
       g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill(); g.stroke();
-      g.fillStyle = ACT0_STATE_COL[nodeState(b.node)] || "#5b6472";
-      g.beginPath(); g.arc(b.x + 12, b.y + b.h/2, 3.4, 0, 7); g.fill();
-      g.font = `${Math.max(7, Math.min(10, (b.w - 30)/9))}px ui-monospace, monospace`;
+      drawKindGlyph(g, kindOf(b.node.id), b.x + 9, b.y + (b.h - 26)/2);
+      g.font = "9.5px ui-monospace, monospace";
+      g.textAlign = "center";
       g.fillStyle = "#b6bfca";
-      g.textAlign = "left";
-      g.fillText(b.node.id, b.x + 21, b.y + b.h/2);
+      g.fillText(b.node.id, b.x + (b.w + 17)/2, b.y + b.h/2);
+      g.fillStyle = ACT0_STATE_COL[nodeState(b.node)] || "#5b6472";
+      g.beginPath(); g.arc(b.x + b.w - 13, b.y + b.h/2, 3, 0, 7); g.fill();
     }
   }
   if (act0Pulse) {
-    const box = act0BoardLayout(W, H).flatMap(r => r.boxes).find(b => b.node.id === act0Pulse);
+    const box = layout.flatMap(r => r.boxes).find(b => b.node.id === act0Pulse);
     const left = act0PulseUntil - performance.now();
     if (box && left > 0) {
       const t = 1 - left / 1200;
@@ -842,22 +931,26 @@ function drawAct0Board(canvas) {
   g.restore();
 }
 
+// The bench is one rack strip: a 3U console server, a 1U switch, and the
+// lead that will join them. One layout feeds drawing, hit-test and probe.
 function act0ConsoleLayout(W, H) {
-  const bw = Math.min(300, Math.max(210, W*0.2)), bh = 96;
-  const cy = Math.round(H * 0.46);
-  const left = { x: Math.round(W/2 - 80 - bw), y: cy - bh/2, w: bw, h: bh };
-  const right = { x: Math.round(W/2 + 80), y: cy - bh/2, w: bw, h: bh };
-  const bendX = left.x + left.w + 36, enterY = right.y + bh*0.72;
-  const lead = [
-    { x: left.x + left.w, y: left.y + bh/2 },
-    { x: bendX, y: left.y + bh/2 },
-    { x: bendX, y: enterY },
-    { x: right.x, y: enterY },
-  ];
+  const rw = Math.min(600, W - 200), rh = 236;
+  const rack = { x: Math.round(W/2 - rw/2), y: Math.round(H*0.44 - rh/2), w: rw, h: rh };
+  const pad = 24, unitH = 34;
+  const leftW = Math.round(rw * 0.62);
+  const stackTop = rack.y + 34 + Math.round((rh - 34 - pad - unitH*3)/2);
+  const left = { x: rack.x + pad, y: stackTop, w: leftW, h: unitH*3 };
+  const right = { x: rack.x + pad*2 + leftW, y: stackTop + unitH*2, w: rw - leftW - pad*3, h: unitH };
+  const ports = [], pw = 16, ph = 9, step = (left.w - 28 - pw) / 7;
+  for (let i = 0; i < 8; i++) ports.push({ x: left.x + 14 + i*step, y: left.y + left.h - 20, w: pw, h: ph });
+  const sel = ports[4];
+  const rport = { x: right.x + right.w - 60, y: right.y + (right.h - ph)/2, w: pw, h: ph };
+  const laneY = left.y + left.h + 24;
+  const a = { x: sel.x + sel.w/2, y: sel.y + sel.h/2 };
+  const b = { x: rport.x + rport.w/2, y: rport.y + rport.h/2 };
   return {
-    left, right, lead,
-    leftCaption: "L1-CON-SRV01 · console panel · unit 4",
-    rightCaption: "SW-L0 · console port",
+    rack, left, right, ports, sel, rport, leadAt: { x: Math.round((a.x + b.x)/2), y: laneY },
+    lead: [a, { x: a.x, y: laneY }, { x: b.x, y: laneY }, b],
   };
 }
 
@@ -880,16 +973,49 @@ function drawAct0Console(canvas) {
   const W = canvas.clientWidth, H = canvas.clientHeight;
   const L = act0ConsoleLayout(W, H);
   const seated = !!S.consoleLinks["sw-l0"];
+  canvas.dataset.act0Bench = JSON.stringify({
+    left: { x: L.left.x, y: L.left.y, w: L.left.w, h: L.left.h },
+    right: { x: L.right.x, y: L.right.y, w: L.right.w, h: L.right.h },
+    lead: L.leadAt, port: L.sel,
+  });
   g.save();
   g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
-  g.fillStyle = "rgba(9,12,16,.5)";
-  g.strokeStyle = "rgba(58,66,80,.9)";
-  g.lineWidth = 1;
-  g.beginPath(); g.roundRect(110, 120, W - 220, H - 320, 10); g.fill(); g.stroke();
+  g.fillStyle = "rgba(10,13,18,.72)";
+  g.strokeStyle = "rgba(96,104,117,.85)";
+  g.lineWidth = 1.2;
+  g.beginPath(); g.roundRect(L.rack.x, L.rack.y, L.rack.w, L.rack.h, 8); g.fill(); g.stroke();
   g.font = "10px ui-monospace, monospace";
-  g.textAlign = "center";
+  g.textAlign = "left";
   g.fillStyle = "#5b6472";
-  g.fillText("CONSOLE PATCH — NOC RACK", W/2, 152);
+  g.fillText("CONSOLE PATCH — NOC RACK · UNIT 4", L.rack.x + 16, L.rack.y + 18);
+
+  const unit = (u, label, tag) => {
+    g.fillStyle = "rgba(18,21,27,.92)";
+    g.strokeStyle = "rgba(64,72,84,1)"; g.lineWidth = 1.2;
+    g.beginPath(); g.roundRect(u.x, u.y, u.w, u.h, 5); g.fill(); g.stroke();
+    g.font = "9.5px ui-monospace, monospace"; g.textAlign = "left"; g.fillStyle = "#9aa4b2";
+    g.fillText(label, u.x + 12, u.y + 15);
+    g.font = "8px ui-monospace, monospace"; g.textAlign = "right"; g.fillStyle = "#5b6472";
+    g.fillText(tag, u.x + u.w - 10, u.y + 14);
+  };
+  unit(L.left, "L1-CON-SRV01", "3U");
+  unit(L.right, "SW-L0", "1U");
+
+  L.ports.forEach((p, i) => {
+    const hot = i === 4 && (act0PortSel === "left" || seated);
+    g.fillStyle = hot ? "#e0a13e" : "rgba(126,145,165,.28)";
+    g.strokeStyle = hot ? "#e0a13e" : "rgba(126,145,165,.55)"; g.lineWidth = 1;
+    g.beginPath(); g.roundRect(p.x, p.y, p.w, p.h, 1.5); g.fill(); g.stroke();
+  });
+
+  // the far port pulses while it is the expected second click
+  const pulse = !seated && act0PortSel === "left" ? .55 + .45*Math.sin(performance.now()/180) : 0;
+  g.fillStyle = seated ? "#e0a13e"
+    : act0PortSel === "left" ? `rgba(224,161,62,${.3 + .65*pulse})`
+    : "rgba(126,145,165,.28)";
+  g.strokeStyle = seated || act0PortSel === "left" ? "#e0a13e" : "rgba(126,145,165,.55)";
+  g.lineWidth = 1;
+  g.beginPath(); g.roundRect(L.rport.x, L.rport.y, L.rport.w, L.rport.h, 1.5); g.fill(); g.stroke();
 
   if (seated) {
     g.strokeStyle = "#e0a13e"; g.lineWidth = 2;
@@ -898,27 +1024,11 @@ function drawAct0Console(canvas) {
     g.stroke();
     for (const p of [L.lead[0], L.lead[L.lead.length-1]]) {
       g.fillStyle = "#e0a13e";
-      g.beginPath(); g.arc(p.x, p.y, 4, 0, 7); g.fill();
+      g.beginPath(); g.arc(p.x, p.y, 3, 0, 7); g.fill();
+      g.fillStyle = "#0a0c0f";
+      g.beginPath(); g.arc(p.x, p.y, 1.1, 0, 7); g.fill();
     }
   }
-
-  const port = (b, caption, chosen) => {
-    g.fillStyle = "rgba(18,21,27,.92)";
-    g.strokeStyle = chosen ? "#e0a13e" : "rgba(64,72,84,1)";
-    g.lineWidth = chosen ? 1.8 : 1.2;
-    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 8); g.fill(); g.stroke();
-    const cxm = b.x + b.w/2, cym = b.y + b.h/2 - 8;
-    g.strokeStyle = chosen ? "#e0a13e" : "#7a8392"; g.lineWidth = 1.4;
-    g.beginPath(); g.roundRect(cxm - 22, cym - 11, 44, 22, 4); g.stroke();
-    g.fillStyle = chosen ? "#e0a13e" : "#7a8392";
-    for (let k = 0; k < 4; k++) { g.beginPath(); g.arc(cxm - 15 + k*10, cym, 2, 0, 7); g.fill(); }
-    g.font = "9.5px ui-monospace, monospace";
-    g.textAlign = "center";
-    g.fillStyle = chosen ? "#e0a13e" : "#9aa4b2";
-    g.fillText(caption, b.x + b.w/2, b.y + b.h + 20);
-  };
-  port(L.left, L.leftCaption, act0PortSel === "left" && !seated);
-  port(L.right, L.rightCaption, false);
   g.restore();
 }
 
@@ -1175,6 +1285,14 @@ export function openNetspace(c) {
       <div class="ns3d-vignette"></div>
       <div id="ns-fade" class="ns3d-fade"></div>
       ${S.act0 ? `<section class="ns-feed hidden" id="ns-syslog"></section>` : ""}
+      ${S.act0 ? `<aside class="ns-card hidden" id="ns-card">
+        <div class="nsc-top"><span class="nsc-kind" id="nsc-kind"></span><span class="nsc-state" id="nsc-state"></span></div>
+        <div class="nsc-name" id="nsc-name"></div>
+        <div class="nsc-kv"><span class="k">layer</span><span class="v" id="nsc-layer"></span></div>
+        <div class="nsc-kv"><span class="k">physical</span><span class="v" id="nsc-physical"></span></div>
+        <div class="nsc-last"><span class="k">LAST EVENT</span><div class="v" id="nsc-last"></div></div>
+        <div class="nsc-actions"><button class="ns-mode" id="nsc-show">SHOW IN FEED</button><button class="nsc-close" id="nsc-close" aria-label="Close">×</button></div>
+      </aside>` : ""}
       <div class="ns3d-head">
         <div id="ns-head-ctx"><span>NETWORK SPACE</span> / <b id="ns-head-seg">F1 — OFFICE</b></div>
         <div class="ns3d-modes">
@@ -1257,6 +1375,8 @@ export function openNetspace(c) {
       for (const v of view) if (T2[v.name]) t2Node(g, v.name, v, W, H, time, hovered===v.name);
       if (hoveredLink != null) t2LinkChips(g, hoveredLink, W, H);
     }
+
+    if (S.act0) syncCard();
 
     let text;
     if (S.act0) {
@@ -1372,7 +1492,8 @@ export function openNetspace(c) {
     act0Hover = hit ? hit.node.id : null;
     canvas.style.cursor = hit ? "pointer" : "";
     if (!hit) { tip.classList.add("hidden"); return; }
-    tip.innerHTML = `<b>${hit.node.id}</b><br/>${hit.node.physical}`;
+    const st = nodeState(hit.node);
+    tip.innerHTML = `<b>${kindOf(hit.node.id)} · ${hit.node.id}</b><br/>${hit.node.physical} · ${st}`;
     tip.classList.remove("hidden");
     tip.style.left = Math.min(mx + 18, W - 240) + "px";
     tip.style.top = Math.max(18, my - 16) + "px";
@@ -1398,7 +1519,11 @@ export function openNetspace(c) {
       return;
     }
     const hit = act0BoardHit(mx, my, W, H);
-    if (hit) act0Selected = hit.node.id;
+    if (hit) {
+      act0Selected = hit.node.id;
+      cardSig = "";
+      syncCard();
+    }
   }
 
   // both modes: drag to pan, wheel to zoom, click to inspect
@@ -1500,6 +1625,54 @@ export function openNetspace(c) {
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
   const mSyslog = ov.querySelector("#ns-mode-syslog"), feedPanel = ov.querySelector("#ns-syslog");
   const feed = feedPanel ? mountSyslogFeed(feedPanel, { onSource: locateNode }) : null;
+
+  // the device card: docked in the map, fed by the same node/log data as the board
+  const card = ov.querySelector("#ns-card");
+  const cardKind = ov.querySelector("#nsc-kind"), cardState = ov.querySelector("#nsc-state");
+  const cardName = ov.querySelector("#nsc-name"), cardLayer = ov.querySelector("#nsc-layer");
+  const cardPhys = ov.querySelector("#nsc-physical"), cardLast = ov.querySelector("#nsc-last");
+  let cardSig = "";
+  const cardOpen = () => nsMode === "virtual" && !!act0Selected;
+  function syncCard() {
+    if (!card) return;
+    const open = cardOpen();
+    card.classList.toggle("hidden", !open);
+    if (!open) return;
+    const node = S.nodes.find(item => item.id === act0Selected);
+    if (!node) { act0Selected = null; card.classList.add("hidden"); return; }
+    const state = nodeState(node);
+    const last = [...S.logs].reverse().find(log => log.device === node.id);
+    const sig = `${node.id}|${state}|${last ? last.ts + "·" + last.message : ""}`;
+    if (sig === cardSig) return;
+    cardSig = sig;
+    cardKind.textContent = kindOf(node.id).toUpperCase();
+    cardState.textContent = state.toUpperCase();
+    cardState.className = "nsc-state " + state;
+    cardName.textContent = node.id;
+    cardLayer.textContent = ACT0_LAYER_LABEL[node.layer] || node.layer;
+    cardPhys.textContent = node.physical;
+    cardLast.textContent = last ? `${last.ts} · ${last.message}` : "no events";
+  }
+  function closeCard() {
+    act0Selected = null;
+    cardSig = "";
+    syncCard();
+  }
+  if (card) {
+    ov.querySelector("#nsc-close").onclick = closeCard;
+    ov.querySelector("#nsc-show").onclick = () => {
+      if (!act0Selected) return;
+      setMode("syslog");
+      if (feed) feed.focusDevice(act0Selected);
+    };
+  }
+  // Escape closes the card first; with the card closed it still leaves the view
+  const onEscape = e => {
+    if (e.key !== "Escape" || !cardOpen()) return;
+    e.stopPropagation();
+    closeCard();
+  };
+  document.addEventListener("keydown", onEscape);
 
   function locateNode(name) {
     if (!visibleNodes().some(node => node.id === name)) {
@@ -1632,7 +1805,7 @@ export function openNetspace(c) {
   setFacZoom(1);
   setMode(nsMode);
 
-  active={raf:requestAnimationFrame(draw),ro,canvas,feed};
+  active={raf:requestAnimationFrame(draw),ro,canvas,feed,onEscape};
   markOpen("netspace", true);
   markActive("netspace");
 }
@@ -1642,6 +1815,7 @@ export function closeNetspace(resetHook=true) {
   if (active) {
     cancelAnimationFrame(active.raf); active.ro.disconnect();
     if (active.feed) active.feed.destroy();
+    if (active.onEscape) document.removeEventListener("keydown", active.onEscape);
     active=null;
   }
   if (ctx && resetHook) ctx.netspaceAnimate=null;

@@ -542,6 +542,30 @@ button{font-family:inherit;cursor:pointer}
 #netspace-canvas.ns-can-pan{cursor:grab}
 .ns3d-shell.ns-panning #netspace-canvas{cursor:grabbing}
 
+/* Act 0 · device card, docked in the map below the mode buttons */
+.ns-card{
+  position:absolute;right:22px;top:64px;width:280px;z-index:8;pointer-events:auto;
+  display:flex;flex-direction:column;gap:8px;padding:12px 14px;
+  background:rgba(8,10,13,.94);border:1px solid var(--line-hi);border-radius:8px;
+  font-family:var(--mono);box-shadow:0 18px 50px rgba(0,0,0,.5);
+}
+.ns-card.hidden{display:none}
+.nsc-top{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.nsc-kind{font-size:9px;letter-spacing:.24em;color:var(--ink-dim)}
+.nsc-state{font-size:8.5px;letter-spacing:.18em;padding:2px 7px;border:1px solid var(--line);border-radius:3px;color:var(--ink-dim)}
+.nsc-state.green{color:#79c98d;border-color:rgba(121,201,141,.5)}
+.nsc-state.red{color:#c2554d;border-color:rgba(194,85,77,.6)}
+.nsc-name{font-size:12px;letter-spacing:.1em;color:var(--white)}
+.nsc-kv{display:flex;justify-content:space-between;gap:12px;font-size:9px}
+.nsc-kv .k{color:var(--ink-faint);letter-spacing:.14em;text-transform:uppercase}
+.nsc-kv .v{color:var(--ink);text-align:right}
+.nsc-last{border-top:1px solid var(--line);padding-top:8px;display:flex;flex-direction:column;gap:4px}
+.nsc-last .k{font-size:8.5px;letter-spacing:.18em;color:var(--ink-faint)}
+.nsc-last .v{font-size:9.5px;line-height:1.5;color:#b6bfca;min-height:2.9em}
+.nsc-actions{display:flex;align-items:center;gap:8px}
+.nsc-close{margin-left:auto;background:none;border:none;color:var(--ink-dim);font-size:15px;line-height:1;cursor:pointer}
+.nsc-close:hover{color:var(--white)}
+
 /* Act 0 · Network Space SYSLOG feed */
 .ns-feed{
   position:absolute;inset:58px 22px 92px;display:flex;flex-direction:column;
@@ -560,6 +584,8 @@ button{font-family:inherit;cursor:pointer}
 }
 .nf-chip:hover,.nf-freeze:hover{border-color:var(--line-hi);color:var(--ink)}
 .nf-chip.on,.nf-freeze.on{border-color:var(--white);color:var(--white)}
+.nf-device{color:var(--amber);border-color:rgba(224,161,62,.6)}
+.nf-scope{color:var(--amber);margin-left:8px}
 .nf-new{
   margin-left:8px;background:var(--amber);border:1px solid var(--amber);border-radius:4px;
   color:#0a0c0f;font-family:var(--mono);font-size:9px;letter-spacing:.14em;padding:4px 8px;cursor:pointer;

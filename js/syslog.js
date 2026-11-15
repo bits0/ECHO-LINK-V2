@@ -43,9 +43,13 @@ const h = (tag, cls, text) => {
   return node;
 };
 
+// The mounted feed answers module-level calls; the view owns one feed at a time.
+let liveFeed = null;
+export function focusDevice(id) { if (liveFeed) liveFeed.focusDevice(id); }
+
 export function mountSyslogFeed(root, opts = {}) {
   const onSource = opts.onSource || (() => {});
-  let chip = "ALL", frozen = false, newCount = 0, lastLen = S.logs.length, stick = true;
+  let chip = "ALL", device = null, frozen = false, newCount = 0, lastLen = S.logs.length, stick = true;
 
   root.innerHTML = `
     <div class="nf-head">
@@ -70,24 +74,36 @@ export function mountSyslogFeed(root, opts = {}) {
     }
   });
 
-  const keep = log => chip === "ALL" ? true
+  const keep = log => (!device || log.device === device) && (
+    chip === "ALL" ? true
     : chip === "CRIT" ? log.sev === "CRIT"
     : chip === "WARN+" ? log.sev !== "INFO"
-    : log.payload && log.payload.layer === chip;
+    : log.payload && log.payload.layer === chip);
 
   // an entry is new for one animation's worth of time after it lands
   const isFresh = log => !!log.arrivedAt && Date.now() - log.arrivedAt < 400;
 
-  function drawCounts() {
+  function drawCounts(shown) {
     const n = { INFO: 0, WARN: 0, CRIT: 0 };
-    for (const log of S.logs) n[log.sev] = (n[log.sev] || 0) + 1;
-    counts.replaceChildren(
+    for (const log of shown) n[log.sev] = (n[log.sev] || 0) + 1;
+    const parts = [
       h("span", "nf-i", `INFO ${n.INFO}`),
       h("span", "nf-sep", "·"),
       h("span", "nf-w", `WARN ${n.WARN}`),
       h("span", "nf-sep", "·"),
       h("span", "nf-c", `CRIT ${n.CRIT}`),
-    );
+    ];
+    if (device || chip !== "ALL") parts.push(h("span", "nf-scope", `· SHOWING ${shown.length}/${S.logs.length}`));
+    counts.replaceChildren(...parts);
+  }
+
+  const chips = root.querySelector(".nf-chips");
+  function drawDeviceChip() {
+    for (const el of chips.querySelectorAll(".nf-device")) el.remove();
+    if (!device) return;
+    const btn = h("button", "nf-chip nf-device", `${device} ×`);
+    btn.dataset.device = "1";
+    chips.insertBefore(btn, chips.firstChild);
   }
 
   function cardFor(log) {
@@ -118,8 +134,9 @@ export function mountSyslogFeed(root, opts = {}) {
 
   function draw() {
     const keepTop = scroller.scrollTop;
-    drawCounts();
-    list.replaceChildren(...S.logs.filter(keep).map(cardFor));
+    const shown = S.logs.filter(keep);
+    drawCounts(shown);
+    list.replaceChildren(...shown.map(cardFor));
     scroller.scrollTop = stick && !frozen ? scroller.scrollHeight : keepTop;
   }
 
@@ -166,15 +183,26 @@ export function mountSyslogFeed(root, opts = {}) {
   root.querySelector(".nf-chips").addEventListener("click", e => {
     const btn = e.target.closest(".nf-chip");
     if (!btn) return;
+    if (btn.dataset.device) {           // the device chip clears only the device
+      device = null;
+      drawDeviceChip();
+      draw();
+      return;
+    }
     chip = btn.dataset.chip;
-    for (const c of root.querySelectorAll(".nf-chip")) c.classList.toggle("on", c === btn);
+    if (chip === "ALL") device = null;  // ALL clears both filters
+    drawDeviceChip();
+    for (const c of root.querySelectorAll(".nf-chip[data-chip]")) c.classList.toggle("on", c === btn);
     draw();
   });
 
   draw();
   const timer = setInterval(tick, 150);
-  return {
+  const api = {
     refresh: () => { lastLen = S.logs.length; draw(); },
-    destroy: () => clearInterval(timer),
+    focusDevice: id => { device = id || null; drawDeviceChip(); stick = true; draw(); },
+    destroy: () => { clearInterval(timer); if (liveFeed === api) liveFeed = null; },
   };
+  liveFeed = api;
+  return api;
 }
