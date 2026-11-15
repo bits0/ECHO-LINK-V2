@@ -52,8 +52,10 @@ test("browser window — the page is whatever the network answers", async () => 
     await page.click("#dv-use");
     await page.waitForSelector("#dock-browser");
 
-    // (a) nothing is open yet
-    assert.equal(await page.locator(".dock-item.is-open, .dock-item.is-active").count(), 0, "(a) the dock starts clean");
+    // (a) no window is open; the workspace itself is the focused surface
+    assert.equal(await page.locator("#win-terminal, #win-browser").count(), 0, "(a) no window is open yet");
+    assert.equal(await page.locator("#dock-pc.is-open").count(), 1, "(a) the desktop surface is open");
+    assert.equal(await page.locator("#dock-pc.is-active").count(), 1, "(a) the desktop surface is active");
 
     await page.click("#dock-browser");
     await page.waitForSelector("#win-browser");
@@ -98,10 +100,11 @@ test("browser window — the page is whatever the network answers", async () => 
     assert.equal(await page.locator("#dock-terminal.is-open, #dock-terminal.is-active").count(), 0, "(d) the closed terminal is clean");
     assert.equal(await page.locator("#dock-browser.is-open").count(), 1, "(d) the browser is still open");
 
-    // (e) closing the browser clears the last open marker
+    // (e) closing the browser clears the last window marker
     await page.click("#win-browser .wb-close");
     await page.waitForSelector("#win-browser", { state: "detached" });
-    assert.equal(await page.locator(".dock-item.is-open").count(), 0, "(e) no window is open");
+    assert.equal(await page.locator(".dock-item.is-open:not(#dock-pc)").count(), 0, "(e) no window is open");
+    assert.equal(await page.locator("#dock-pc.is-active").count(), 1, "(e) the workspace takes focus back");
 
     // the dock still works after the windows close
     await page.click("#dock-terminal");
@@ -473,6 +476,191 @@ test("Act 0 syslog — a third NetSpace view: cards, counts, filters, freeze, lo
     assert.equal(await page.locator("#ns-mode-virtual.on").count(), 1, "locating returns to the board");
     assert.equal(await page.locator("#ns-syslog.hidden").count(), 1);
     assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.act0Pulse), "L1-SW-DIST01");
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
+
+test("shell dock — one dock, three states, one surface", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  const watch = page => {
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+  };
+  const dockIds = page => page.locator("#shell-dock .dock-item").evaluateAll(btns => btns.map(b => b.dataset.dock));
+  const dockShown = async page => {
+    const box = await page.locator("#shell-dock").boundingBox();
+    const display = await page.locator("#shell-dock").evaluate(el => getComputedStyle(el).display);
+    return display !== "none" && !!box && box.height > 0;
+  };
+  try {
+    browser = await chromium.launch({ headless: true });
+
+    // ---------- Act 0 ----------
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 720 });
+    watch(page);
+    await page.goto(url);
+    await page.click("#btn-act0");
+    await page.waitForSelector("#game-screen:not(.hidden)");
+
+    // (a) exactly one dock for the whole shell
+    assert.equal(await page.locator("#shell-dock").count(), 1, "(a) the shell owns one dock");
+    assert.equal(await page.locator(".ns3d-dock").count(), 0, "(a) Network Space has no dock of its own");
+    assert.equal(await page.locator(".desk-dock").count(), 0, "(a) the desktop has no dock of its own");
+
+    // (b) Act 0 vocabulary
+    assert.deepEqual(await dockIds(page), ["terminal", "netspace", "notepad", "sop", "quit"]);
+    const act0Labels = await txt(page.locator("#shell-dock"));
+    for (const label of ["TERMINAL", "NETWORK SPACE", "NOTEPAD", "SOP", "QUIT TO TITLE"])
+      assert.ok(act0Labels.includes(label), `(b) ${label} is on the dock`);
+
+    // (j) the action stands apart from the tools, at 1280x720
+    const spacing = await page.evaluate(() => {
+      const tools = [...document.querySelectorAll("#shell-dock .dock-item:not(.dock-action)")];
+      const action = document.querySelector("#dock-quit").getBoundingClientRect();
+      const last = tools[tools.length - 1].getBoundingClientRect();
+      return {
+        gap: action.left - last.right,
+        actionLeft: action.left,
+        toolRights: tools.map(t => t.getBoundingClientRect().right),
+        dividers: document.querySelectorAll("#shell-dock .dock-divider").length,
+      };
+    });
+    assert.ok(spacing.gap >= 24, `(j) the gap before QUIT is ${spacing.gap}px (wanted >= 24)`);
+    assert.ok(spacing.toolRights.every(r => spacing.actionLeft > r), "(j) QUIT sits right of every tool");
+    assert.equal(spacing.dividers, 1, "(j) one divider separates the tools from the action");
+
+    // (d) Network Space opens over the desktop; the one dock sits above it
+    await page.click("#dock-netspace");
+    await page.waitForSelector("#ns-mode-virtual");
+    // ...and the map brings no dock of its own with it
+    assert.equal(await page.locator("#shell-dock").count(), 1, "(a) still exactly one dock with the map open");
+    assert.equal(await page.locator(".ns3d-dock").count(), 0, "(a) the map adds no second dock");
+    assert.equal(await page.locator(".desk-dock").count(), 0, "(a) the desktop adds no second dock");
+    assert.equal(await dockShown(page), true, "(d) the dock stays visible over Network Space");
+    assert.equal(await page.locator("#dock-netspace.is-open").count(), 1, "(d) Network Space is open");
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 1, "(d) Network Space is active");
+    assert.equal(await page.locator(".dock-item.is-active").count(), 1, "(d) exactly one item is active");
+    assert.equal(await page.locator(".dock-item.is-open:not(#dock-netspace)").count(), 0, "(d) the other tools stay closed");
+    assert.equal(await page.evaluate(() => {
+      const b = document.querySelector("#dock-netspace").getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return !!hit && !!hit.closest("#shell-dock");
+    }), true, "(d) the dock paints above the map");
+
+    // (e) clicking the active item minimises: open stays, active goes
+    await page.click("#dock-netspace");
+    assert.equal(await page.locator("#netspace-overlay.hidden").count(), 1, "(e) the overlay is parked");
+    assert.equal(await page.locator("#dock-netspace.is-open").count(), 1, "(e) Network Space is still open");
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 0, "(e) it is no longer active");
+    assert.equal(await page.locator(".dock-item.is-active").count(), 0, "(e) nothing else takes focus");
+
+    // (f) + NEGATIVE — clicking it again restores it; two clicks end visible
+    await page.click("#dock-netspace");
+    assert.equal(await page.locator("#netspace-overlay.hidden").count(), 0, "(f) the overlay is back");
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 1, "(f) focus returns");
+    await page.click("#dock-netspace");
+    await page.click("#dock-netspace");
+    assert.equal(await page.locator("#netspace-overlay.hidden").count(), 0, "(f) a double click ends visible, not stuck hidden");
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 1);
+
+    // (g) INVERTED — a tool floats over the map instead of replacing it
+    await page.click("#dock-terminal");
+    await page.waitForSelector("#win-terminal");
+    assert.equal(await page.locator("#netspace-overlay.hidden").count(), 0, "(g) the map stays visible");
+    assert.equal(await page.locator("#win-terminal").count(), 1, "(g) the terminal window exists");
+    assert.equal(await page.locator("#dock-terminal.is-active").count(), 1, "(g) TERMINAL is active");
+    assert.equal(await page.locator("#dock-netspace.is-open").count(), 1, "(g) NETWORK SPACE is still open");
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 0, "(g) NETWORK SPACE yields focus");
+    assert.equal(await page.evaluate(() => {
+      const b = document.querySelector("#win-terminal").getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return !!hit && !!hit.closest("#win-terminal");
+    }), true, "(g) the window paints above the map");
+
+    // (h) closing the last floating window leaves the map up (NEGATIVE)
+    await page.click("#win-terminal .wb-close");
+    await page.waitForSelector("#win-terminal", { state: "detached" });
+    assert.equal(await page.locator("#dock-terminal.is-open").count(), 0, "(h) TERMINAL is closed");
+    assert.equal(await page.locator("#netspace-overlay.hidden").count(), 0, "(h) the map is still up");
+    assert.equal(await dockShown(page), true, "(h) the dock stays visible");
+
+    // (i) touching the map returns focus to it; floating windows stay put
+    await page.click("#dock-terminal");
+    await page.waitForSelector("#win-terminal");
+    const canvasSpot = await page.evaluate(() => {
+      const c = document.querySelector("#netspace-canvas");
+      const r = c.getBoundingClientRect();
+      for (const [fx, fy] of [[0.008, 0.6], [0.992, 0.6], [0.008, 0.3]]) {
+        const x = r.left + r.width * fx, y = r.top + r.height * fy;
+        if (document.elementFromPoint(x, y) === c) return { x, y };
+      }
+      return null;
+    });
+    assert.ok(canvasSpot, "(i) an empty patch of the map canvas is reachable");
+    await page.mouse.click(canvasSpot.x, canvasSpot.y);
+    assert.equal(await page.locator("#dock-netspace.is-active").count(), 1, "(i) the map takes focus back");
+    assert.equal(await page.locator("#dock-terminal.is-active").count(), 0, "(i) the terminal yields focus");
+    assert.equal(await page.locator("#win-terminal").count(), 1, "(i) the floating window stays where it is");
+
+    // (q) QUIT TO TITLE leaves the game, keeps the save, takes the dock
+    await page.click("#dock-quit");
+    await page.waitForSelector("#title-screen:not(.hidden)");
+    assert.equal(await page.locator("#game-screen.hidden").count(), 1, "(q) the game screen is gone");
+    assert.equal(await page.locator("#shell-dock.hidden").count(), 1, "(q) the dock leaves with it");
+    const saved = await page.evaluate(() => localStorage.getItem("echolink-ch1-save-v1"));
+    assert.ok(saved, "(q) the save key is still present");
+    assert.equal(JSON.parse(saved).act0, true, "(q) the save still holds Act 0");
+    await page.close();
+
+    // ---------- Chapter 1 ----------
+    const lab = await browser.newPage();
+    watch(lab);
+    await lab.goto(url);
+    await lab.click("#btn-lab");
+    await lab.waitForSelector("#game-screen:not(.hidden)");
+
+    // (c) Chapter 1 vocabulary
+    assert.deepEqual(await dockIds(lab), ["terminal", "browser", "netspace", "pc", "away"]);
+    const ch1Labels = await txt(lab.locator("#shell-dock"));
+    for (const label of ["TERMINAL", "BROWSER", "NETWORK SPACE", "PC", "STEP AWAY"])
+      assert.ok(ch1Labels.includes(label), `(c) ${label} is on the dock`);
+    assert.equal(await dockShown(lab), true, "the dock is there over the physical room");
+
+    // the phone outranks the dock; the dock returns when the phone is away
+    await lab.click("#phone-button");
+    await lab.waitForSelector("#phone-overlay:not(.hidden)");
+    assert.equal(await lab.evaluate(() => {
+      const b = document.querySelector("#dock-netspace").getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return !!hit && !!hit.closest("#phone-overlay");
+    }), true, "the phone sits above the dock");
+    await lab.click("#phone-close");
+    assert.equal(await dockShown(lab), true, "the dock is visible with the phone away");
+
+    await lab.click('[data-hs="door:office"]');
+    await lab.waitForSelector('[data-hs="device:PC-C"]');
+    await lab.click('[data-hs="device:PC-C"]');
+    await lab.click("#dv-use");
+    await lab.waitForSelector("#desk-body");
+    assert.equal(await lab.locator("#dock-pc.is-open").count(), 1, "the workstation surface is open");
+    assert.equal(await lab.locator("#dock-pc.is-active").count(), 1, "and it owns the screen");
+
+    // STEP AWAY keeps its old meaning: the desktop closes, the room returns
+    await lab.click("#dock-away");
+    assert.equal(await lab.locator("#desktop-overlay.hidden").count(), 1, "STEP AWAY leaves the desktop");
+    assert.equal(await lab.locator("#dock-pc.is-open, #dock-pc.is-active").count(), 0, "the workstation closes");
+    assert.equal(await dockShown(lab), true, "the dock stays with the room");
 
     assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
   } finally {

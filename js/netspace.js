@@ -7,11 +7,11 @@
 import { S, getSettings } from "./state.js";
 import { activeScenario, PREVIEW_FLOORS, FACILITY } from "./scenario.js";
 import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, routerUp } from "./net.js";
-import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
 import { nodeIconImage } from "./icons.js";
-import { seatConsoleLink, visibleNodes, nodeState, ACT0 } from "./act0.js";
+import { seatConsoleLink, visibleNodes, nodeState } from "./act0.js";
 import { mountSyslogFeed } from "./syslog.js";
+import { markOpen, markActive } from "./shell.js";
 
 let ctx = null;
 let active = null;
@@ -1167,7 +1167,6 @@ export function openNetspace(c) {
   act0Pulse = null;
   act0PulseUntil = 0;
   if (S.act0) nsMode = "virtual";   // Act 0 always opens on the board
-  const backLabel = S.act0 ? Object.keys(ACT0.devices)[0] : activeScenario.player;
   const ov = el("netspace-overlay");
   ov.classList.remove("hidden");
   ov.innerHTML = `
@@ -1202,16 +1201,6 @@ export function openNetspace(c) {
         <button id="ns-zoom-reset" title="Reset view">⟲</button>
       </div>
       <div class="ns-node-tip hidden" id="ns-tip"></div>
-      <div class="ns-terminal hidden" id="ns-terminal">
-        <div class="ns-terminal-bar"><span>FIELD TERMINAL</span><button id="ns-terminal-close">✕</button></div>
-        <div class="ns-terminal-body" id="ns-terminal-body"></div>
-      </div>
-      <div class="ns3d-dock">
-        <button class="dock-item" id="ns-open-terminal"><span>&gt;_</span>TERMINAL</button>
-        <button class="dock-item dock-primary"><span>◇</span>NETWORK SPACE</button>
-        <button class="dock-item" id="ns-back-desktop"><span>⌂</span>${backLabel}</button>
-        <button class="dock-item" id="ns-step-away"><span>⏏</span>STEP AWAY</button>
-      </div>
     </div>`;
 
   const canvas = ov.querySelector("#netspace-canvas");
@@ -1415,6 +1404,7 @@ export function openNetspace(c) {
   // both modes: drag to pan, wheel to zoom, click to inspect
   let drag = null;
   canvas.addEventListener("pointerdown", e => {
+    markActive("netspace");   // touching the map takes focus back in the dock
     if (S.act0) { drag = { x:e.clientX, y:e.clientY, moved:0 }; return; }
     drag = { x:e.clientX, y:e.clientY, moved:0 };
     canvas.setPointerCapture(e.pointerId);
@@ -1500,14 +1490,6 @@ export function openNetspace(c) {
     Object.assign(acam(), nsMode === "physical" ? fitCamPlan(W,H) : fitCam(W,H));
   };
 
-  const terminalPanel=ov.querySelector("#ns-terminal");
-  const terminalBody=ov.querySelector("#ns-terminal-body");
-  let terminalOpen=false;
-  function setTerminal(open) {
-    terminalOpen=open;
-    terminalPanel.classList.toggle("hidden",!open);
-    if(open && !terminalBody.dataset.ready) { terminalBody.dataset.ready="1"; openTerminal(terminalBody,ctx); }
-  }
   const note = ov.querySelector("#ns-note");
   const legend = ov.querySelector("#ns-legend");
   const crumb = ov.querySelector("#ns-crumb"), crumbText = ov.querySelector("#ns-crumb-text");
@@ -1650,12 +1632,9 @@ export function openNetspace(c) {
   setFacZoom(1);
   setMode(nsMode);
 
-  ov.querySelector("#ns-open-terminal").onclick=()=>setTerminal(terminalPanel.classList.contains("hidden"));
-  ov.querySelector("#ns-terminal-close").onclick=()=>setTerminal(false);
-  ov.querySelector("#ns-back-desktop").onclick=()=>closeNetspace();
-  ov.querySelector("#ns-step-away").onclick=()=>{ closeNetspace(); ctx.closeDesktop({ reopen:false }); };
-
   active={raf:requestAnimationFrame(draw),ro,canvas,feed};
+  markOpen("netspace", true);
+  markActive("netspace");
 }
 
 export function closeNetspace(resetHook=true) {
@@ -1667,4 +1646,27 @@ export function closeNetspace(resetHook=true) {
   }
   if (ctx && resetHook) ctx.netspaceAnimate=null;
   if (ov) { ov.classList.add("hidden"); ov.innerHTML=""; }
+  markOpen("netspace", false);
+  markActive(null);
+}
+
+export function netspaceVisible() {
+  const ov = el("netspace-overlay");
+  return !!ov && !ov.classList.contains("hidden");
+}
+
+// The dock treats a minimised Network Space as open: the view is
+// parked, not torn down, so returning to it costs nothing.
+export function minimiseNetspace() {
+  const ov = el("netspace-overlay");
+  if (!ov || !ov.children.length) return;
+  ov.classList.add("hidden");
+}
+
+export function showNetspace() {
+  const ov = el("netspace-overlay");
+  if (!ov || !ov.children.length) return;
+  ov.classList.remove("hidden");
+  markOpen("netspace", true);
+  markActive("netspace");
 }

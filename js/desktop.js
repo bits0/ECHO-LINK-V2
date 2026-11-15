@@ -1,16 +1,18 @@
 // ============================================================
-// ECHO//LINK — a PC's field workspace + bottom tool dock
+// ECHO//LINK — a PC's field workspace
 // Opens as any workstation; Network Space is the player's own.
-// Network Space opens full-view; Terminal floats above it.
+// The shell dock lives in shell.js; this module maps its items
+// onto desktop surfaces (windows, the workspace, Network Space).
 // ============================================================
 import { S, save, worldClock } from "./state.js";
 import { activeScenario } from "./scenario.js";
 import { sfx } from "./audio.js";
 import { openTerminal } from "./terminal.js";
-import { openNetspace, closeNetspace } from "./netspace.js";
+import { openNetspace, closeNetspace, minimiseNetspace, showNetspace, netspaceVisible } from "./netspace.js";
 import { webRequest } from "./net.js";
 import { openNotepad } from "./notepad.js";
 import { openSop } from "./sop.js";
+import { mountDock, unmountDock, markOpen, markActive } from "./shell.js";
 
 const APP_TITLES = { terminal:"FIELD TERMINAL", browser:"BROWSER", notepad:"NOTEPAD", sop:"SOP" };
 const APPS = Object.keys(APP_TITLES);
@@ -50,80 +52,185 @@ export function openDesktop(opts = {}) {
           : "Observe the topology, test from the terminal, then return to the physical room."}</div>
         ${isPlayer && !S.netspaceSeen ? `<div class="ws-new">◈ NETWORK SPACE AVAILABLE</div>` : ""}
       </div>
-      <div class="desk-dock">
-        <button class="dock-item" id="dock-terminal"><span>&gt;_</span>TERMINAL</button>
-        ${S.act0
-          ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE</button>
-        <button class="dock-item" id="dock-notepad"><span>✎</span>NOTEPAD</button>
-        <button class="dock-item" id="dock-sop"><span>◈</span>SOP</button>`
-          : `<button class="dock-item" id="dock-browser"><span>◱</span>BROWSER</button>
-        ${isPlayer ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE${S.netspaceSeen ? "" : `<b>NEW</b>`}</button>` : ""}`}
-        <button class="dock-item" id="dock-away"><span>⏏</span>STEP AWAY</button>
-      </div>
     </div>`;
 
-  const leave = () => {
+  el("dt-leave").onclick = () => {
+    sfx.click();
     if (S.act0) { ctx.toast("Stepping away is not available in Act 0.", "amber"); return; }
     closeDesktop();
   };
-  el("dt-leave").onclick = () => { sfx.click(); leave(); };
-  el("dock-away").onclick = () => { sfx.click(); leave(); };
-  el("dock-terminal").onclick = () => { sfx.click(); spawnWindow("terminal"); };
-  const br = el("dock-browser");
-  if (br) br.onclick = () => { sfx.click(); spawnWindow("browser"); };
-  for (const app of ["notepad", "sop"]) {
-    const item = el("dock-" + app);
-    if (item) item.onclick = () => { sfx.click(); spawnWindow(app); };
+
+  mountShell();
+  if (!S.act0) { markOpen("pc", true); markActive("pc"); }
+}
+
+// The item sets are the shell's whole vocabulary. Act 0 has no
+// physical room yet, so its only exit is back to the title.
+export function mountShell() {
+  const items = S.act0
+    ? [
+        { id:"terminal", label:"TERMINAL", icon:">_" },
+        { id:"netspace", label:"NETWORK SPACE", icon:"◇" },
+        { id:"notepad", label:"NOTEPAD", icon:"✎" },
+        { id:"sop", label:"SOP", icon:"◈" },
+        { id:"quit", label:"QUIT TO TITLE", icon:"⏏", action:true },
+      ]
+    : [
+        { id:"terminal", label:"TERMINAL", icon:">_" },
+        { id:"browser", label:"BROWSER", icon:"◱" },
+        { id:"netspace", label:"NETWORK SPACE", icon:"◇" },
+        { id:"pc", label:"PC", icon:"⌂" },
+        { id:"away", label:"STEP AWAY", icon:"⏏", action:true },
+      ];
+  mountDock(items, {
+    terminal: intent => tool("terminal", intent),
+    browser: intent => tool("browser", intent),
+    notepad: intent => tool("notepad", intent),
+    sop: intent => tool("sop", intent),
+    netspace: intent => netspaceIntent(intent),
+    pc: intent => pcIntent(intent),
+    quit: () => quitToTitle(),
+    away: () => stepAway(),
+  });
+  // mountDock resets state; a Network Space open before a remount stays open
+  if (!S.act0 && el("netspace-overlay").children.length) markOpen("netspace", true);
+}
+
+function tool(app, intent) {
+  sfx.click();
+  const win = el("win-" + app);
+  if (intent === "minimise") {
+    if (win) win.classList.add("hidden");
+    focusTop();
+    return;
   }
-  const ns = el("dock-netspace");
-  if (ns) ns.onclick = () => {
-    sfx.click();
-    if (S.act0) { openNetspace(ctx); return; }
-    const first = !S.netspaceSeen;
-    S.netspaceSeen = true; save();
-    openNetspace(ctx);
-    if (first) ctx.story.onNetspaceFirstOpen();
-    ctx.changed("netspace");
-  };
+  // tools float over the map: the map keeps its open state underneath
+  ensureDesktop();
+  if (el("win-" + app)) {
+    el("win-" + app).classList.remove("hidden");
+    raise(el("win-" + app));
+  } else spawnWindow(app);
+  markOpen(app, true);
+  markActive(app);
+}
+
+function netspaceIntent(intent) {
+  sfx.click();
+  if (intent === "minimise") { minimiseNetspace(); focusTop(); return; }
+  if (el("netspace-overlay").children.length) { showNetspace(); return; }
+  if (S.act0) { openNetspace(ctx); return; }
+  const first = !S.netspaceSeen;
+  S.netspaceSeen = true; save();
+  openNetspace(ctx);
+  if (first) ctx.story.onNetspaceFirstOpen();
+  ctx.changed("netspace");
+}
+
+function pcIntent(intent) {
+  sfx.click();
+  if (netspaceVisible()) minimiseNetspace();
+  if (intent === "minimise") {
+    el("desktop-overlay").classList.add("hidden");
+    markActive(null);
+    return;
+  }
+  if (!el("desk-body")) { openDesktop({ host: activeScenario.player }); return; }
+  el("desktop-overlay").classList.remove("hidden");
+  markOpen("pc", true);
+  markActive("pc");
+}
+
+function stepAway() {
+  sfx.click();
+  if (netspaceVisible()) { closeNetspace(); closeDesktop({ reopen:false }); return; }
+  closeDesktop();
+}
+
+function quitToTitle() {
+  sfx.click();
+  save();                          // a quit is not a reset: the save survives
+  closeNetspace();
+  clearWindows();
+  const ov = el("desktop-overlay");
+  ov.classList.add("hidden");
+  ov.innerHTML = "";
+  host = activeScenario.player;
+  returnTo = null;
+  unmountDock();
+  el("game-screen").classList.add("hidden");
+  el("title-screen").classList.remove("hidden");
 }
 
 // opts.reopen === false keeps the desktop's launch context (used when the
-// Network Space dock itself is stepping away for good).
+// shell's STEP AWAY leaves both surfaces for the physical room).
 export function closeDesktop(opts = {}) {
   if (S.act0) return;   // Act 0 has no physical scene yet — the workstation is the act
   const back = returnTo === "netspace" && opts.reopen !== false;
-  el("desktop-overlay").classList.add("hidden");
-  el("desktop-overlay").innerHTML = "";
+  clearWindows();
+  const ov = el("desktop-overlay");
+  ov.classList.add("hidden");
+  ov.innerHTML = "";
+  markOpen("pc", false);
+  markActive(null);
   host = activeScenario.player;
   returnTo = null;
   save();
   if (back) openNetspace(ctx);
 }
 
-// Dock state is derived from the windows themselves: open = the window
-// exists, active = the open window on top. View state, never kept in S.
-function syncDock() {
-  let active = null, top = -Infinity;
+// The desktop is not mounted (it was closed); a tool reopens it.
+function ensureDesktop() {
+  if (!el("desk-body")) { openDesktop({ host: activeScenario.player }); return; }
+  el("desktop-overlay").classList.remove("hidden");
+  if (!S.act0) markOpen("pc", true);
+}
+
+function raise(win) { win.style.zIndex = ++zTop; }
+
+// Floating windows live in their own body-level layer so a map under them
+// keeps its own DOM, camera and feed untouched.
+function winLayer() {
+  let layer = el("win-layer");
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.id = "win-layer";
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+
+function clearWindows() {
+  const layer = el("win-layer");
+  if (layer) layer.replaceChildren();
+  for (const app of APPS) markOpen(app, false);
+}
+
+// The focused surface is the topmost visible window, else the map,
+// else the workspace.
+function focusTop() {
+  if (netspaceVisible()) { markActive("netspace"); return; }
+  let best = null, top = -Infinity;
   for (const app of APPS) {
     const win = el("win-" + app);
-    if (!win) continue;
+    if (!win || win.classList.contains("hidden")) continue;
     const z = Number(win.style.zIndex) || 0;
-    if (z > top) { top = z; active = app; }
+    if (z > top) { top = z; best = app; }
   }
-  for (const app of APPS) {
-    const item = el("dock-" + app);
-    if (!item) continue;
-    item.classList.toggle("is-open", !!el("win-" + app));
-    item.classList.toggle("is-active", app === active);
-    if (app === active) item.setAttribute("aria-current", "true");
-    else item.removeAttribute("aria-current");
+  if (best) { markActive(best); return; }
+  if (!S.act0 && el("desk-body") && !el("desktop-overlay").classList.contains("hidden")) {
+    markActive("pc"); return;
   }
+  markActive(null);
+}
+
+// After Network Space steps aside, the desktop owns the screen again.
+export function focusDesktopSurface() {
+  if (netspaceVisible()) return;
+  focusTop();
 }
 
 function spawnWindow(app) {
   const body = el("desk-body");
-  if (el("win-"+app)) { el("win-"+app).style.zIndex = ++zTop; syncDock(); return; }
-
   const win = document.createElement("div");
   win.className = "win workspace-win";
   win.id = "win-" + app;
@@ -132,7 +239,7 @@ function spawnWindow(app) {
   win.style.width = w+"px"; win.style.height = h+"px";
   win.style.left = Math.max(12, Math.min(body.clientWidth-w-16, 90+offset)) + "px";
   win.style.top  = Math.max(12, Math.min(body.clientHeight-h-92, 52+offset/2)) + "px";
-  win.style.zIndex = ++zTop;
+  raise(win);
   const barTitle = "C:\\\\ " + (APP_TITLES[app] || "APP");
   win.innerHTML = `
     <div class="win-bar">
@@ -141,14 +248,15 @@ function spawnWindow(app) {
       <div class="wb-close">✕</div>
     </div>
     <div class="win-body"></div>`;
-  body.appendChild(win);
-  syncDock();
+  winLayer().appendChild(win);
 
-  win.addEventListener("mousedown", () => { win.style.zIndex = ++zTop; syncDock(); });
+  win.addEventListener("mousedown", () => { raise(win); markActive(app); });
   win.querySelector(".wb-close").onclick = () => {
     sfx.click();
     if (win._flush) win._flush();
-    win.remove(); syncDock();
+    win.remove();
+    markOpen(app, false);
+    focusTop();
   };
 
   const bar = win.querySelector(".win-bar");

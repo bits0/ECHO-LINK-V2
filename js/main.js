@@ -6,7 +6,7 @@ import { SCENES } from "./scenes.js";
 import { setScenario, SCENARIOS, CHAPTER1, CHAPTER1_LAB } from "./scenario.js";
 import { sfx, ambience } from "./audio.js";
 import { initDevice, openDevice, closeDevice, openPatchPanel, openOutlet, cableInHand, dropHand } from "./device.js";
-import { initDesktop, openDesktop, closeDesktop } from "./desktop.js";
+import { initDesktop, openDesktop, closeDesktop, mountShell, focusDesktopSurface } from "./desktop.js";
 import { closeNetspace } from "./netspace.js";
 import { initPhone, wirePhoneButton, openPhone, closePhone, togglePhone, refreshBadge, renderTab } from "./phone.js";
 import { initStory, story, letterbox } from "./story.js";
@@ -200,7 +200,7 @@ window.addEventListener("keydown", e => {
     if (cableInHand()) { dropHand(); return; }   // a connector in hand is dropped first
     if (!el("phone-overlay").classList.contains("hidden")) { closePhone(); return; }
     if (!el("hint-card").classList.contains("hidden")) { el("hint-card").classList.add("hidden"); return; }
-    if (!el("netspace-overlay").classList.contains("hidden")) { closeNetspace(); return; }
+    if (!el("netspace-overlay").classList.contains("hidden")) { closeNetspace(); focusDesktopSurface(); return; }
     if (!el("desktop-overlay").classList.contains("hidden")) { closeDesktop(); return; }
     if (el("title-screen").classList.contains("hidden")) setPaused(!paused);
   }
@@ -255,6 +255,7 @@ function startGame(fresh, mechanics=false) {
   navigate(S.scene, true);
   refreshBadge();
   updateObjectiveBar();
+  mountShell();
   if (fresh && !S.mechanicsMode) story.onGameStart();
 }
 
@@ -270,6 +271,7 @@ function startAct0() {
   save();
   el("title-screen").classList.add("hidden");
   el("game-screen").classList.remove("hidden");
+  mountShell();
   openDesktop({ host: "L1-WS-NOC01" });
 }
 
