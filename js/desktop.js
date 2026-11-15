@@ -9,11 +9,10 @@ import { sfx } from "./audio.js";
 import { openTerminal } from "./terminal.js";
 import { openNetspace, closeNetspace } from "./netspace.js";
 import { webRequest } from "./net.js";
-import { openSyslog } from "./syslog.js";
 import { openNotepad } from "./notepad.js";
 import { openSop } from "./sop.js";
 
-const APP_TITLES = { terminal:"FIELD TERMINAL", browser:"BROWSER", syslog:"SYSLOG", notepad:"NOTEPAD", sop:"SOP" };
+const APP_TITLES = { terminal:"FIELD TERMINAL", browser:"BROWSER", notepad:"NOTEPAD", sop:"SOP" };
 const APPS = Object.keys(APP_TITLES);
 
 let ctx = null;
@@ -55,7 +54,6 @@ export function openDesktop(opts = {}) {
         <button class="dock-item" id="dock-terminal"><span>&gt;_</span>TERMINAL</button>
         ${S.act0
           ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE</button>
-        <button class="dock-item" id="dock-syslog"><span>≣</span>SYSLOG</button>
         <button class="dock-item" id="dock-notepad"><span>✎</span>NOTEPAD</button>
         <button class="dock-item" id="dock-sop"><span>◈</span>SOP</button>`
           : `<button class="dock-item" id="dock-browser"><span>◱</span>BROWSER</button>
@@ -73,7 +71,7 @@ export function openDesktop(opts = {}) {
   el("dock-terminal").onclick = () => { sfx.click(); spawnWindow("terminal"); };
   const br = el("dock-browser");
   if (br) br.onclick = () => { sfx.click(); spawnWindow("browser"); };
-  for (const app of ["syslog", "notepad", "sop"]) {
+  for (const app of ["notepad", "sop"]) {
     const item = el("dock-" + app);
     if (item) item.onclick = () => { sfx.click(); spawnWindow(app); };
   }
@@ -163,7 +161,6 @@ function spawnWindow(app) {
 
   const wb = win.querySelector(".win-body");
   if (app === "browser") openBrowser(wb, host);
-  else if (app === "syslog") openSyslog(wb);
   else if (app === "notepad") win._flush = openNotepad(wb);
   else if (app === "sop") openSop(wb);
   else openTerminal(wb, ctx, host);

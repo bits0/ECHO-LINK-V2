@@ -215,6 +215,11 @@ test("facility map — four floors, one sheet, one breadcrumb", async () => {
     await page.click("#dock-netspace");
     await page.waitForSelector("#ns-mode-physical");
 
+    // Chapter 1 keeps two modes; the feed is an Act 0 view
+    assert.equal(await page.locator(".ns3d-modes .ns-mode").count(), 2, "no SYSLOG mode outside Act 0");
+    assert.equal(await page.locator("#ns-mode-syslog").count(), 0);
+    assert.equal(await page.locator("#ns-syslog").count(), 0);
+
     // VIRTUAL mode still has no building controls
     assert.equal(await page.locator("#ns-crumb.hidden").count(), 1, "VIRTUAL shows no breadcrumb");
     assert.equal(await page.locator("#ns-fac.hidden").count(), 1, "VIRTUAL shows no floor cards");
@@ -362,6 +367,112 @@ test("facility map — four floors, one sheet, one breadcrumb", async () => {
     await page.waitForFunction(() => (document.querySelector("#ns-readout")?.textContent || "").includes("PANEL LIGHTS ON"), null, { timeout: 10000 });
     assert.equal(await txt(page.locator("#ns-crumb-text")), "F1 — OFFICE");
     assert.match(await txt(page.locator("#ns-head-ctx")), /F1 — OFFICE/);
+
+    assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+});
+
+test("Act 0 syslog — a third NetSpace view: cards, counts, filters, freeze, locate", async () => {
+  const server = await startServer();
+  const url = `http://127.0.0.1:${server.address().port}/index.html`;
+  let browser;
+  const problems = [];
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    page.on("pageerror", e => problems.push(`[pageerror] ${e.message}`));
+    page.on("console", m => {
+      if (m.type() === "error" || m.type() === "warning") problems.push(`[console.${m.type()}] ${m.text()}`);
+    });
+    page.on("dialog", d => d.accept());
+
+    await page.goto(url);
+    await page.click("#btn-act0");
+    await page.waitForSelector("#dock-netspace");
+    assert.equal(await page.locator("#dock-syslog").count(), 0, "the desktop dock no longer offers SYSLOG");
+    await page.click("#dock-netspace");
+    await page.waitForSelector("#ns-mode-syslog");
+
+    // (a) three modes; SYSLOG swaps the canvas region to the feed
+    assert.equal(await page.locator(".ns3d-modes .ns-mode").count(), 3, "VIRTUAL, PHYSICAL, SYSLOG");
+    assert.equal(await page.locator("#ns-mode-virtual.on").count(), 1, "the board opens in VIRTUAL");
+    assert.equal(await page.locator("#ns-syslog.hidden").count(), 1, "the feed is not the opening view");
+    await page.click("#ns-mode-syslog");
+    assert.equal(await page.locator("#ns-mode-syslog.on").count(), 1);
+    assert.equal(await page.locator("#ns-mode-virtual.on").count(), 0);
+    assert.equal(await page.locator("#ns-syslog.hidden").count(), 0, "SYSLOG shows the feed");
+    assert.equal(await page.locator(".sys-card").count(), 12, "boot draws the twelve calm cards");
+
+    const countOf = async cls => Number((await txt(page.locator(`#nf-counts .${cls}`))).split(/\s+/)[1]);
+    assert.equal(await countOf("nf-i"), 12);
+    assert.equal(await countOf("nf-w"), 0);
+    assert.equal(await countOf("nf-c"), 0);
+
+    // (b) the cascade lands in the same feed; counts sum to the card count
+    await page.evaluate(() => import("/js/act0.js").then(m => m.cascade()));
+    await page.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36, null, { timeout: 10000 });
+    const sum = await page.evaluate(() =>
+      ["nf-i", "nf-w", "nf-c"].reduce((n, c) => n + Number(document.querySelector(`#nf-counts .${c}`).textContent.split(" ")[1]), 0));
+    assert.equal(sum, 36, "the header counts sum to the feed");
+    assert.equal(await page.locator(".sys-card.info").count(), 14);
+    assert.equal(await page.locator(".sys-card.warn").count(), 6);
+    assert.equal(await page.locator(".sys-card.crit").count(), 16);
+    assert.equal(await page.locator(".sys-card").last().locator(".sc-ts").textContent(), "02:14:00.047", "newest card at the tail");
+
+    // (c) one chip at a time: CRIT keeps only critical cards
+    await page.click('.nf-chip[data-chip="CRIT"]');
+    assert.equal(await page.locator(".nf-chip.on").count(), 1);
+    assert.equal(await page.locator(".sys-card").count(), 16);
+    assert.equal(await page.locator(".sys-card:not(.crit)").count(), 0);
+    assert.equal(await countOf("nf-c"), 16);
+
+    // (f) THE ANOMALY CHECK — same class list, same payload keys as a neighbour
+    const anomaly = await page.evaluate(() => {
+      const cards = [...document.querySelectorAll(".sys-card")];
+      const target = cards.find(c => c.querySelector(".sc-ts").textContent === "02:13:58.771");
+      const other = cards.find(c => c.classList.contains("crit") && c !== target);
+      return {
+        found: !!target,
+        sameClass: target.className === other.className,
+        sameKeys: JSON.stringify([...target.querySelectorAll(".sc-kv .k")].map(k => k.textContent))
+          === JSON.stringify([...other.querySelectorAll(".sc-kv .k")].map(k => k.textContent)),
+      };
+    });
+    assert.equal(anomaly.found, true, "the 02:13:58.771 card is in the feed");
+    assert.equal(anomaly.sameClass, true, "the anomaly has exactly a CRIT card's class list");
+    assert.equal(anomaly.sameKeys, true, "the anomaly payload has exactly a CRIT card's keys");
+
+    // (d) FREEZE holds the view; unfreezing returns to the tail
+    await page.click('.nf-chip[data-chip="ALL"]');
+    await page.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36);
+    const scrollTop = () => page.evaluate(() => document.querySelector("#nf-scroll").scrollTop);
+    await page.evaluate(() => { document.querySelector("#nf-scroll").scrollTop = 0; });
+    await page.click("#nf-freeze");
+    assert.equal(await page.locator("#nf-freeze.on").count(), 1);
+    const held = await scrollTop();
+    await page.waitForTimeout(1000);
+    assert.equal(await scrollTop(), held, "FREEZE stops the auto-scroll");
+    await page.click("#nf-freeze");
+    await page.waitForFunction(() => {
+      const s = document.querySelector("#nf-scroll");
+      return Math.abs(s.scrollTop - (s.scrollHeight - s.clientHeight)) <= 1;
+    }, null, { timeout: 5000 });
+
+    // NEGATIVE — L0 is hidden before a console session; the source refuses
+    const sourceOf = text => page.locator(".sys-card").filter({ has: page.locator(".sys-src", { hasText: text }) }).first().locator(".sys-src");
+    await sourceOf("L0-SW-ACC01").click();
+    assert.equal(await txt(page.locator("#toast")), "not visible on the board yet");
+    assert.equal(await page.locator("#ns-mode-syslog.on").count(), 1, "the toast leaves SYSLOG in place");
+    assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.act0Pulse), undefined);
+
+    // (e) a visible source switches to VIRTUAL and pulses its node
+    await sourceOf("L1-SW-DIST01").click();
+    assert.equal(await page.locator("#ns-mode-virtual.on").count(), 1, "locating returns to the board");
+    assert.equal(await page.locator("#ns-syslog.hidden").count(), 1);
+    assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.act0Pulse), "L1-SW-DIST01");
 
     assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
   } finally {

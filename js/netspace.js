@@ -11,10 +11,11 @@ import { openTerminal } from "./terminal.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
 import { nodeIconImage } from "./icons.js";
 import { seatConsoleLink, visibleNodes, nodeState, ACT0 } from "./act0.js";
+import { mountSyslogFeed } from "./syslog.js";
 
 let ctx = null;
 let active = null;
-let nsMode = "virtual";            // "virtual" | "physical" — persists across opens
+let nsMode = "virtual";            // "virtual" | "physical" | "syslog" — persists across opens
 let physView = "floor";            // "floor" | "building"
 let previewFloor = null;           // a preview sheet: shell and racks, nothing wired
 let selectedFacilityFloor = null;  // facility floor drawn amber in the building
@@ -758,6 +759,8 @@ function drawFacilityBuilding(g, W, H, canvas) {
 const ACT0_STATE_COL = { green:"#79c98d", red:"#c2554d" };
 let act0Hover = null;
 let act0PortSel = null;
+let act0Pulse = null;              // node id ringed after a source click
+let act0PulseUntil = 0;            // the ring fades out by this time
 
 // One layout feeds the drawing and the hit-test, so they cannot disagree.
 function act0BoardLayout(W, H) {
@@ -792,6 +795,10 @@ function act0BoardHit(mx, my, W, H) {
 function drawAct0Board(canvas) {
   const g = canvas.getContext("2d");
   const W = canvas.clientWidth, H = canvas.clientHeight;
+  if (act0Pulse && performance.now() >= act0PulseUntil) {
+    act0Pulse = null;
+    delete canvas.dataset.act0Pulse;
+  }
   g.save();
   g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   g.fillStyle = "rgba(9,12,16,.5)";
@@ -816,6 +823,20 @@ function drawAct0Board(canvas) {
       g.fillStyle = "#b6bfca";
       g.textAlign = "left";
       g.fillText(b.node.id, b.x + 21, b.y + b.h/2);
+    }
+  }
+  if (act0Pulse) {
+    const box = act0BoardLayout(W, H).flatMap(r => r.boxes).find(b => b.node.id === act0Pulse);
+    const left = act0PulseUntil - performance.now();
+    if (box && left > 0) {
+      const t = 1 - left / 1200;
+      g.globalAlpha = left / 1200;
+      g.strokeStyle = "#e8ebef";
+      g.lineWidth = 2;
+      g.beginPath();
+      g.roundRect(box.x - 6 - 12*t, box.y - 6 - 12*t, box.w + 12 + 24*t, box.h + 12 + 24*t, 9);
+      g.stroke();
+      g.globalAlpha = 1;
     }
   }
   g.restore();
@@ -1143,6 +1164,8 @@ export function openNetspace(c) {
   hoveredFacilityFloor = null;
   act0Hover = null;
   act0PortSel = null;
+  act0Pulse = null;
+  act0PulseUntil = 0;
   if (S.act0) nsMode = "virtual";   // Act 0 always opens on the board
   const backLabel = S.act0 ? Object.keys(ACT0.devices)[0] : activeScenario.player;
   const ov = el("netspace-overlay");
@@ -1152,11 +1175,13 @@ export function openNetspace(c) {
       <canvas id="netspace-canvas"></canvas>
       <div class="ns3d-vignette"></div>
       <div id="ns-fade" class="ns3d-fade"></div>
+      ${S.act0 ? `<section class="ns-feed hidden" id="ns-syslog"></section>` : ""}
       <div class="ns3d-head">
         <div id="ns-head-ctx"><span>NETWORK SPACE</span> / <b id="ns-head-seg">F1 — OFFICE</b></div>
         <div class="ns3d-modes">
           <button class="ns-mode" id="ns-mode-virtual">VIRTUAL</button>
           <button class="ns-mode" id="ns-mode-physical">PHYSICAL</button>
+          ${S.act0 ? `<button class="ns-mode" id="ns-mode-syslog">SYSLOG</button>` : ""}
         </div>
         <div class="ns3d-live">LIVE OBSERVATION <i></i></div>
       </div>
@@ -1226,9 +1251,11 @@ export function openNetspace(c) {
     const byName=Object.fromEntries(view.map(v=>[v.name,v]));
 
     if (S.act0) {
-      t2Grid(g, W, H);
-      if (nsMode === "physical") drawAct0Console(canvas);
-      else drawAct0Board(canvas);
+      if (nsMode !== "syslog") {   // the feed owns the canvas region
+        t2Grid(g, W, H);
+        if (nsMode === "physical") drawAct0Console(canvas);
+        else drawAct0Board(canvas);
+      }
     } else if (nsMode === "physical") {
       // the physical layer — the building sheet, or the whole building
       t2Grid(g, W, H);
@@ -1244,7 +1271,9 @@ export function openNetspace(c) {
 
     let text;
     if (S.act0) {
-      if (nsMode === "physical") {
+      if (nsMode === "syslog") {
+        text = "SYSLOG — EVENT FEED · CLICK A SOURCE TO LOCATE IT";
+      } else if (nsMode === "physical") {
         text = S.consoleLinks["sw-l0"]
           ? "CONSOLE PATCH — LEAD SEATED · CLICK THE LEAD FOR ITS STATUS"
           : act0PortSel === "left" ? "L1-CON-SRV01 SELECTED — CLICK SW-L0"
@@ -1487,10 +1516,23 @@ export function openNetspace(c) {
   const viewToggle = ov.querySelector("#ns-view-toggle");
   const fadeEl = ov.querySelector("#ns-fade");
   const mVirtual = ov.querySelector("#ns-mode-virtual"), mPhysical = ov.querySelector("#ns-mode-physical");
+  const mSyslog = ov.querySelector("#ns-mode-syslog"), feedPanel = ov.querySelector("#ns-syslog");
+  const feed = feedPanel ? mountSyslogFeed(feedPanel, { onSource: locateNode }) : null;
+
+  function locateNode(name) {
+    if (!visibleNodes().some(node => node.id === name)) {
+      ctx.toast("not visible on the board yet", "amber");
+      return;
+    }
+    setMode("virtual");
+    act0Pulse = name;
+    act0PulseUntil = performance.now() + 1160;
+    canvas.dataset.act0Pulse = name;
+  }
 
   function renderChrome() {
     if (S.act0) {
-      headSeg.textContent = "ACT 0 — FACILITY STATUS";
+      headSeg.textContent = nsMode === "syslog" ? "ACT 0 — EVENT FEED" : "ACT 0 — FACILITY STATUS";
       crumb.classList.add("hidden");
       facPanel.classList.add("hidden");
       zoomBar.style.display = "none";
@@ -1580,11 +1622,18 @@ export function openNetspace(c) {
     hoveredPlan = null;
     mVirtual.classList.toggle("on", m === "virtual");
     mPhysical.classList.toggle("on", m === "physical");
+    if (mSyslog) mSyslog.classList.toggle("on", m === "syslog");
     canvas.classList.add("ns-can-pan");
     if (S.act0) {
       legend.classList.add("hidden");
+      note.classList.toggle("hidden", m === "syslog");
+      readout.classList.toggle("hidden", m === "syslog");
+      if (feedPanel) feedPanel.classList.toggle("hidden", m !== "syslog");
+      if (m === "syslog" && feed) feed.refresh();
       note.textContent = m === "physical"
         ? "PHYSICAL — CONSOLE PATCH · OUT-OF-BAND ACCESS"
+        : m === "syslog"
+        ? "SYSLOG — EVENT FEED · SEVERITY IS DATA · CLICK A SOURCE TO LOCATE IT"
         : "VIRTUAL — FACILITY STATUS · CLICK A NODE";
       renderChrome();
       return;
@@ -1597,6 +1646,7 @@ export function openNetspace(c) {
   }
   mVirtual.onclick = () => setMode("virtual");
   mPhysical.onclick = () => setMode("physical");
+  if (mSyslog) mSyslog.onclick = () => setMode("syslog");
   setFacZoom(1);
   setMode(nsMode);
 
@@ -1605,13 +1655,15 @@ export function openNetspace(c) {
   ov.querySelector("#ns-back-desktop").onclick=()=>closeNetspace();
   ov.querySelector("#ns-step-away").onclick=()=>{ closeNetspace(); ctx.closeDesktop({ reopen:false }); };
 
-  active={raf:requestAnimationFrame(draw),ro,canvas};
+  active={raf:requestAnimationFrame(draw),ro,canvas,feed};
 }
 
 export function closeNetspace(resetHook=true) {
   const ov=el("netspace-overlay");
   if (active) {
-    cancelAnimationFrame(active.raf); active.ro.disconnect(); active=null;
+    cancelAnimationFrame(active.raf); active.ro.disconnect();
+    if (active.feed) active.feed.destroy();
+    active=null;
   }
   if (ctx && resetHook) ctx.netspaceAnimate=null;
   if (ov) { ov.classList.add("hidden"); ov.innerHTML=""; }
