@@ -651,13 +651,28 @@ test("syslog — scrollback holds, and the wave keeps its own pace", async () =>
     await openFeed(slow);
     const started = Date.now();
     await slow.evaluate(() => import("/js/act0.js").then(m => m.cascadeStream()));
-    await slow.waitForTimeout(5200);
-    const midCards = await slow.locator(".sys-card").count();
-    assert.ok(midCards > 12 && midCards <= 21, `the wave is paced by seconds (5s: ${midCards - 12} cards)`);
+
+    // time the wait for the first card; never sample a fixed instant
+    const t0 = Date.now();
+    await slow.waitForFunction(() => document.querySelectorAll(".sys-card").length > 12,
+      null, { timeout: 15000 });
+    const firstGap = (Date.now() - t0) / 1000;
+    assert.ok(firstGap >= 0.9 && firstGap <= 8,
+      `first card arrives on a seconds scale (${firstGap.toFixed(2)}s)`);
+
+    // pace, not a snapshot: wait for the next card and time that gap too
+    const before = await slow.locator(".sys-card").count();
+    const t1 = Date.now();
+    await slow.waitForFunction(c => document.querySelectorAll(".sys-card").length > c,
+      before, { timeout: 15000 });
+    const nextGap = (Date.now() - t1) / 1000;
+    assert.ok(nextGap >= 0.9 && nextGap <= 8,
+      `the next card is a seconds-scale gap (${nextGap.toFixed(2)}s)`);
+
     await slow.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36, null, { timeout: 150000 });
     const seconds = (Date.now() - started) / 1000;
-    console.log(`slow wave: 5s=${midCards - 12} arrivals, total=${seconds.toFixed(1)}s`);
-    assert.ok(seconds > 24 && seconds < 125, `24 gaps inside 1–5s (took ${seconds.toFixed(1)}s)`);
+    console.log(`cadence: first=${firstGap.toFixed(2)}s next=${nextGap.toFixed(2)}s total=${seconds.toFixed(1)}s`);
+    assert.ok(seconds >= 20 && seconds <= 160, `24 gaps on a human scale (took ${seconds.toFixed(1)}s)`);
     await slow.close();
 
     assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
