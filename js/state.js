@@ -33,6 +33,15 @@ export function freshState() {
     hintLevel:{},                  // per-objective hint progression
     stats:{ pings:0, fixes:0, startTime:Date.now() },
     muted:false,
+    act0:false,
+    sessions:{},                   // { "sw-l0": { state:"disconnected"|"connected", openedAt } }
+    consoleLinks:{},               // { "sw-l0": { from:"L1-CON-SRV01", to:"SW-L0", seatedAt } }
+    logs:[],                       // ordered; array order IS scroll order
+    pins:[],                       // copies of log entries
+    notepad:"",
+    sop:[],                        // [{ id, title, body }]
+    stability:{ total:0, perScenario:{} },
+    clockStart:null,               // "HH:MM(:SS)" from the active scenario; null = 21:47
   };
 }
 
@@ -142,8 +151,14 @@ export function currentObjective() {
 }
 
 // One shared in-world clock: three narrative minutes per real minute.
+// Act 0 keeps its own start time and runs one narrative minute per real minute.
 export function worldClock() {
   const elapsed = Math.max(0, Date.now() - (S.stats.startTime || Date.now()));
+  if (S.act0 && S.clockStart) {
+    const [h, m] = S.clockStart.split(":").map(Number);
+    const total = (h*60 + m + Math.floor(elapsed/60000)) % (24*60);
+    return String(Math.floor(total/60)).padStart(2,"0") + ":" + String(total%60).padStart(2,"0");
+  }
   const total = (21*60 + 47 + Math.floor(elapsed/20000)) % (24*60);
   return String(Math.floor(total/60)).padStart(2,"0") + ":" + String(total%60).padStart(2,"0");
 }

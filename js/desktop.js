@@ -9,6 +9,12 @@ import { sfx } from "./audio.js";
 import { openTerminal } from "./terminal.js";
 import { openNetspace, closeNetspace } from "./netspace.js";
 import { webRequest } from "./net.js";
+import { openSyslog } from "./syslog.js";
+import { openNotepad } from "./notepad.js";
+import { openSop } from "./sop.js";
+
+const APP_TITLES = { terminal:"FIELD TERMINAL", browser:"BROWSER", syslog:"SYSLOG", notepad:"NOTEPAD", sop:"SOP" };
+const APPS = Object.keys(APP_TITLES);
 
 let ctx = null;
 export function initDesktop(c) { ctx = c; }
@@ -45,19 +51,34 @@ export function openDesktop(opts = {}) {
       </div>
       <div class="desk-dock">
         <button class="dock-item" id="dock-terminal"><span>&gt;_</span>TERMINAL</button>
-        <button class="dock-item" id="dock-browser"><span>◱</span>BROWSER</button>
-        ${isPlayer ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE${S.netspaceSeen ? "" : `<b>NEW</b>`}</button>` : ""}
+        ${S.act0
+          ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE</button>
+        <button class="dock-item" id="dock-syslog"><span>≣</span>SYSLOG</button>
+        <button class="dock-item" id="dock-notepad"><span>✎</span>NOTEPAD</button>
+        <button class="dock-item" id="dock-sop"><span>◈</span>SOP</button>`
+          : `<button class="dock-item" id="dock-browser"><span>◱</span>BROWSER</button>
+        ${isPlayer ? `<button class="dock-item dock-primary" id="dock-netspace"><span>◇</span>NETWORK SPACE${S.netspaceSeen ? "" : `<b>NEW</b>`}</button>` : ""}`}
         <button class="dock-item" id="dock-away"><span>⏏</span>STEP AWAY</button>
       </div>
     </div>`;
 
-  el("dt-leave").onclick = () => { sfx.click(); closeDesktop(); };
-  el("dock-away").onclick = () => { sfx.click(); closeDesktop(); };
+  const leave = () => {
+    if (S.act0) { ctx.toast("Stepping away is not available in Act 0.", "amber"); return; }
+    closeDesktop();
+  };
+  el("dt-leave").onclick = () => { sfx.click(); leave(); };
+  el("dock-away").onclick = () => { sfx.click(); leave(); };
   el("dock-terminal").onclick = () => { sfx.click(); spawnWindow("terminal"); };
-  el("dock-browser").onclick = () => { sfx.click(); spawnWindow("browser"); };
+  const br = el("dock-browser");
+  if (br) br.onclick = () => { sfx.click(); spawnWindow("browser"); };
+  for (const app of ["syslog", "notepad", "sop"]) {
+    const item = el("dock-" + app);
+    if (item) item.onclick = () => { sfx.click(); spawnWindow(app); };
+  }
   const ns = el("dock-netspace");
   if (ns) ns.onclick = () => {
     sfx.click();
+    if (S.act0) { ctx.toast("Network Space is not available in Act 0.", "amber"); return; }
     const first = !S.netspaceSeen;
     S.netspaceSeen = true; save();
     openNetspace(ctx);
@@ -69,6 +90,7 @@ export function openDesktop(opts = {}) {
 // opts.reopen === false keeps the desktop's launch context (used when the
 // Network Space dock itself is stepping away for good).
 export function closeDesktop(opts = {}) {
+  if (S.act0) return;   // Act 0 has no physical scene yet — the workstation is the act
   const back = returnTo === "netspace" && opts.reopen !== false;
   el("desktop-overlay").classList.add("hidden");
   el("desktop-overlay").innerHTML = "";
@@ -82,13 +104,13 @@ export function closeDesktop(opts = {}) {
 // exists, active = the open window on top. View state, never kept in S.
 function syncDock() {
   let active = null, top = -Infinity;
-  for (const app of ["terminal", "browser"]) {
+  for (const app of APPS) {
     const win = el("win-" + app);
     if (!win) continue;
     const z = Number(win.style.zIndex) || 0;
     if (z > top) { top = z; active = app; }
   }
-  for (const app of ["terminal", "browser"]) {
+  for (const app of APPS) {
     const item = el("dock-" + app);
     if (!item) continue;
     item.classList.toggle("is-open", !!el("win-" + app));
@@ -111,7 +133,7 @@ function spawnWindow(app) {
   win.style.left = Math.max(12, Math.min(body.clientWidth-w-16, 90+offset)) + "px";
   win.style.top  = Math.max(12, Math.min(body.clientHeight-h-92, 52+offset/2)) + "px";
   win.style.zIndex = ++zTop;
-  const barTitle = app === "browser" ? "C:\\\\ BROWSER" : "C:\\\\ FIELD TERMINAL";
+  const barTitle = "C:\\\\ " + (APP_TITLES[app] || "APP");
   win.innerHTML = `
     <div class="win-bar">
       <div class="wb-dot"></div>
@@ -123,7 +145,11 @@ function spawnWindow(app) {
   syncDock();
 
   win.addEventListener("mousedown", () => { win.style.zIndex = ++zTop; syncDock(); });
-  win.querySelector(".wb-close").onclick = () => { sfx.click(); win.remove(); syncDock(); };
+  win.querySelector(".wb-close").onclick = () => {
+    sfx.click();
+    if (win._flush) win._flush();
+    win.remove(); syncDock();
+  };
 
   const bar = win.querySelector(".win-bar");
   bar.addEventListener("mousedown", e => {
@@ -133,8 +159,12 @@ function spawnWindow(app) {
     window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
   });
 
-  if (app === "browser") openBrowser(win.querySelector(".win-body"), host);
-  else openTerminal(win.querySelector(".win-body"), ctx, host);
+  const wb = win.querySelector(".win-body");
+  if (app === "browser") openBrowser(wb, host);
+  else if (app === "syslog") openSyslog(wb);
+  else if (app === "notepad") win._flush = openNotepad(wb);
+  else if (app === "sop") openSop(wb);
+  else openTerminal(wb, ctx, host);
 }
 
 // The browser is a client: every pixel of a page comes from webRequest.

@@ -55,7 +55,15 @@ export function togglePhone() { phoneOpen() ? closePhone() : openPhone(); }
 
 export function renderTab() {
   el("phone-clock").textContent = worldClock();
-  document.querySelectorAll(".phone-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === activeTab));
+  if (S.act0) {
+    activeTab = "chat";
+    document.querySelectorAll(".phone-tab").forEach(t => {
+      t.classList.toggle("hidden", t.dataset.tab !== "chat");
+      t.classList.toggle("active", t.dataset.tab === "chat");
+    });
+  } else {
+    document.querySelectorAll(".phone-tab").forEach(t => t.classList.toggle("active", t.dataset.tab === activeTab));
+  }
   const c = el("phone-content");
   if (activeTab === "jobs") c.innerHTML = jobsHTML();
   else if (activeTab === "chat") { c.innerHTML = chatHTML(); wireChat(); }
@@ -128,6 +136,7 @@ function jobsHTML() {
 
 // ================= CHAT =================
 function chatHTML() {
+  if (S.act0) return `<div class="chat-sys" style="margin-top:30px">No messages.</div>`;
   if (inLab()) {
     return `<div class="chat-sys" style="margin-top:30px">NO CONVERSATIONS<br/><br/>narrative link disabled in the lab.</div>`;
   }

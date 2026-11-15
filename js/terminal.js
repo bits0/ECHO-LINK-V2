@@ -4,8 +4,9 @@
 // ============================================================
 import { ping, ipconfig, helpText } from "./net.js";
 import { sfx } from "./audio.js";
-import { save } from "./state.js";
+import { S, save } from "./state.js";
 import { activeScenario } from "./scenario.js";
+import { openSession, closeSession } from "./act0.js";
 
 // host = the machine this terminal belongs to; PC-C unless told otherwise.
 export function openTerminal(body, ctx, host = activeScenario.player) {
@@ -64,8 +65,22 @@ export function openTerminal(body, ctx, host = activeScenario.player) {
         body.closest(".ns-terminal")?.classList.add("hidden");
         break;
       }
-      case "ipconfig": print(ipconfig(host)); break;
+      case "ipconfig":
+        if (S.act0) { print([{text:"no network path from this workstation", cls:"t-dim"}]); break; }
+        print(ipconfig(host)); break;
+      case "session": {
+        const [verb, sessTarget] = args;
+        if ((verb !== "open" && verb !== "close") || !sessTarget) {
+          print([{text:"Usage: session open|close <target>", cls:"t-dim"}]);
+          break;
+        }
+        const res = (verb === "open" ? openSession : closeSession)(sessTarget);
+        print(res.lines.map(text => ({ text, cls: text.startsWith("no ") ? "t-dim" : "t-green" })));
+        save();
+        break;
+      }
       case "ping": {
+        if (S.act0) { print([{text:"no network path from this workstation", cls:"t-dim"}]); break; }
         if (!target) { print([{text:"Usage: ping <name-or-ip>", cls:"t-dim"}]); break; }
         const lines = ping(target, host);
         printDelayed(lines, () => {

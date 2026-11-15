@@ -10,6 +10,7 @@ import { initDesktop, openDesktop, closeDesktop } from "./desktop.js";
 import { closeNetspace } from "./netspace.js";
 import { initPhone, wirePhoneButton, openPhone, closePhone, togglePhone, refreshBadge, renderTab } from "./phone.js";
 import { initStory, story, letterbox } from "./story.js";
+import { ACT0, bootAct0 } from "./act0.js";
 
 const el = id => document.getElementById(id);
 const $ = s => document.querySelector(s);
@@ -257,8 +258,24 @@ function startGame(fresh, mechanics=false) {
   if (fresh && !S.mechanicsMode) story.onGameStart();
 }
 
+// ---------- Act 0 boot: no story hooks, no cabling, no network ----------
+function startAct0() {
+  resetState();
+  S.started = true;
+  S.act0 = true;
+  S.clockStart = ACT0.clockStart;
+  S.devices = structuredClone(ACT0.devices);
+  S.cabling = { outlets:{}, runs:{}, panel:{}, cables:{} };
+  bootAct0();
+  save();
+  el("title-screen").classList.add("hidden");
+  el("game-screen").classList.remove("hidden");
+  openDesktop({ host: "L1-WS-NOC01" });
+}
+
 el("btn-start").onclick = () => { sfx.click(); if (hasSave() && !confirm("Start over? Your existing save will be erased.")) return; startGame(true, false); };
 el("btn-lab").onclick = () => { sfx.click(); if (hasSave() && !confirm("Start a fresh Mechanics Lab? Your existing save will be erased.")) return; startGame(true, true); };
+el("btn-act0").onclick = () => { sfx.click(); if (hasSave() && !confirm("Start a fresh Act 0? Your existing save will be erased.")) return; startAct0(); };
 el("btn-continue").onclick = () => { if (loadSave()) { sfx.click(); startGame(false, S.mechanicsMode); } };
 el("title-settings").onclick = () => {
   el("set-ns-remember").checked = !!getSettings().nsRememberView;
