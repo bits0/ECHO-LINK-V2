@@ -4,6 +4,7 @@
 // ============================================================
 import { S, save, OBJECTIVES, objectiveDone, currentObjective, worldClock } from "./state.js";
 import { sfx } from "./audio.js";
+import { ACT0, beginChat, choose, revealDue, cascade } from "./act0.js";
 
 let ctx = null;
 export function initPhone(c) { ctx = c; }
@@ -44,7 +45,7 @@ export function refreshBadge() {
 function phoneOpen() { return !el("phone-overlay").classList.contains("hidden"); }
 
 export function openPhone(tab) {
-  activeTab = tab || activeTab;
+  activeTab = S.act0 ? "chat" : (tab || activeTab);
   el("phone-overlay").classList.remove("hidden");
   if (activeTab === "chat") S.unread.chat = 0;
   if (activeTab === "mail") S.unread.mail = 0;
@@ -57,6 +58,7 @@ export function renderTab() {
   el("phone-clock").textContent = worldClock();
   if (S.act0) {
     activeTab = "chat";
+    if (!S.chat) beginChat();
     document.querySelectorAll(".phone-tab").forEach(t => {
       t.classList.toggle("hidden", t.dataset.tab !== "chat");
       t.classList.toggle("active", t.dataset.tab === "chat");
@@ -135,8 +137,35 @@ function jobsHTML() {
 }
 
 // ================= CHAT =================
+function act0ChatHTML() {
+  const c = S.chat;
+  if (!c) return `<div class="chat-sys" style="margin-top:30px">No messages.</div>`;
+  let h = `<div class="chat-thread"><div class="chat-sys">RUE — encrypted link</div>`;
+  for (const m of c.shown) {
+    if (m.speaker === "player") h += `<div class="chat-msg me">${m.text}</div>`;
+    else h += `<div class="chat-msg them"><span class="chat-name">RUE</span>${m.text.replace(/\n/g, "<br/>")}</div>`;
+  }
+  if (c.typing) h += `<div class="chat-typing">Rue is typing…</div>`;
+  if (c.away) {
+    const seen = c.current === "s1-12" || c.current === "s2-15" ? "2 minutes ago" : "just now";
+    h += `<div class="chat-sys">Rue is away — last seen ${seen}</div>`;
+  }
+  h += `</div>`;
+  if (c.waiting) {
+    const b = ACT0.chat.find(x => x.id === c.current);
+    if (b && b.choices) {
+      h += `<div class="chat-choices">`;
+      b.choices.forEach((ch, i) => {
+        h += `<button class="chat-choice" data-choice="${i}">${ch.label}</button>`;
+      });
+      h += `</div>`;
+    }
+  }
+  return h;
+}
+
 function chatHTML() {
-  if (S.act0) return `<div class="chat-sys" style="margin-top:30px">No messages.</div>`;
+  if (S.act0) return act0ChatHTML();
   if (inLab()) {
     return `<div class="chat-sys" style="margin-top:30px">NO CONVERSATIONS<br/><br/>narrative link disabled in the lab.</div>`;
   }
@@ -158,8 +187,49 @@ function chatHTML() {
 function wireChat() {
   const c = el("phone-content");
   c.scrollTop = c.scrollHeight;
+  if (S.act0) {
+    c.querySelectorAll("[data-choice]").forEach(btn => {
+      btn.onclick = () => {
+        sfx.click();
+        const res = choose(Number(btn.dataset.choice));
+        if (res && res.cascadeIn) armCascade(res.cascadeIn);
+        save();
+        renderTab();
+      };
+    });
+    return;
+  }
   ctx.story.renderChatChoices(el("chat-choices"));
 }
+
+// The cascade is armed only by the s1-02 tap — once, even if the beat replays.
+let cascadeArmed = false;
+function armCascade(ms) {
+  if (cascadeArmed) return;
+  cascadeArmed = true;
+  setTimeout(cascade, ms);
+}
+
+// Reveal due beats at 250ms while the chat is on screen, 1Hz while it is not.
+let lastReveal = 0;
+setInterval(() => {
+  if (!S.act0 || !S.chat) return;
+  const open = phoneOpen() && activeTab === "chat";
+  const now = Date.now();
+  if (now - lastReveal < (open ? 250 : 1000)) return;
+  lastReveal = now;
+  const c = S.chat;
+  const sig = () => `${c.seq}|${c.current}|${c.shown.length}|${c.typing}|${c.away}|${c.waiting}`;
+  const before = sig();
+  const id = revealDue(now);
+  const changed = sig() !== before;
+  if (id) {
+    if (open) S.unread.chat = 0;
+    else { S.unread.chat++; refreshBadge(); }
+  }
+  if (id || changed) save();
+  if (open && changed) renderTab();
+}, 250);
 
 // ================= MAIL =================
 const MAILS = {

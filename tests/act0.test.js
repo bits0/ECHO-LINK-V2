@@ -9,6 +9,7 @@ import { S, resetState } from "../js/state.js";
 import {
   ACT0, bootAct0, clockNow, cascade, visibleNodes, nodeState,
   openSession, closeSession, seatConsoleLink, pinLog, removePin,
+  beginChat, revealDue, choose, maybeSequence2, notifySopOpened,
 } from "../js/act0.js";
 
 function boot() {
@@ -190,4 +191,97 @@ test("(p) an unrelated log does not cancel the cascade", () => {
   assert.equal(S.logs.length, 37);
   assert.equal(S.cascadeDone, true);
   assert.equal(cascade().appended, 0);  // still idempotent
+});
+
+test("(q) the Act 0 chat script is complete and in order", () => {
+  const ids = ACT0.chat.map(b => b.id);
+  assert.deepEqual(ids, [
+    "s1-01", "s1-02", "s1-03a", "s1-03b", "s1-04", "s1-05", "s1-06a", "s1-06b",
+    "s1-07", "s1-08", "s1-09", "s1-10", "s1-11", "s1-12",
+    "s2-01", "s2-02", "s2-03", "s2-04", "s2-05", "s2-06", "s2-07", "s2-08",
+    "s2-09", "s2-10", "s2-11", "s2-12", "s2-13", "s2-14", "s2-15",
+  ]);
+  // 03a/03b and 06a/06b are the two takes of beats 03 and 06
+  const numbered1 = new Set(ACT0.chat.filter(b => b.id.startsWith("s1-")).map(b => b.id.replace(/[a-z]$/, "")));
+  assert.equal(numbered1.size, 12);
+  assert.equal(ACT0.chat.filter(b => b.id.startsWith("s2-")).length, 15);
+  const pause = ACT0.chat.find(b => b.id === "s1-11");
+  assert.equal(pause.delay, 52000);
+  assert.equal(pause.away, true);
+});
+
+test("(r) only the s1-02 tap returns the cascade trigger", () => {
+  boot();
+  Object.assign(S.chat, { current: "s1-02", waiting: true });
+  const r = choose(0);
+  assert.deepEqual(r, { cascadeIn: 8000 });
+  const last = S.chat.shown[S.chat.shown.length - 1];
+  assert.equal(last.speaker, "player");
+  assert.equal(last.text, "Everything's red. Syslog is going crazy.");
+  assert.equal(S.chat.current, "s1-03a");
+  Object.assign(S.chat, { current: "s1-05", waiting: true });
+  const r2 = choose(0);
+  assert.ok(!r2 || r2.cascadeIn == null);
+});
+
+test("(s) sequence 2 needs both the SOP and a live console session", () => {
+  boot();
+  seatConsoleLink();
+  openSession("sw-l0");
+  assert.equal(maybeSequence2(), false);
+  assert.equal(S.chat.seq, 1);
+  S.chat.current = "s1-12";            // the pause has landed
+  notifySopOpened();
+  assert.equal(S.chat.seq, 2);
+  assert.equal(S.chat.current, "s2-01");
+  boot();                              // the session was never opened
+  notifySopOpened();
+  assert.equal(S.chat.seq, 1);
+  assert.equal(S.chat.current, "s1-01");
+});
+
+test("(t) the pause goes typing → away and schedules nothing else", () => {
+  boot();
+  Object.assign(S.chat, { current: "s1-10", waiting: false, typing: true, away: false, pendingAt: 1_000_000 });
+  assert.equal(revealDue(1_000_000), "s1-10");
+  assert.equal(S.chat.current, "s1-11");
+  assert.equal(S.chat.typing, true);          // Rue is typing the 52s message
+  const due = S.chat.pendingAt, delay = 52000;
+  assert.equal(revealDue(due - (delay - 4999)), null);
+  assert.equal(S.chat.away, false);
+  assert.equal(S.chat.typing, true);
+  assert.equal(revealDue(due - (delay - 5000)), null);
+  assert.equal(S.chat.away, true);
+  assert.equal(S.chat.typing, false);
+  assert.equal(revealDue(due), "s1-11");
+  assert.equal(S.chat.current, "s1-12");      // the away marker takes over
+  assert.equal(S.chat.pendingAt, Infinity);
+  assert.equal(revealDue(due + 90000), null); // nothing else in sequence 1
+});
+
+test("(u) bootAct0 seeds the chat at s1-01", () => {
+  boot();
+  assert.equal(S.chat.seq, 1);
+  assert.equal(S.chat.current, "s1-01");
+  assert.deepEqual(S.chat.shown, []);
+  assert.equal(S.chat.waiting, false);
+});
+
+test("(v) sequence 2 waits for the pause to land", () => {
+  boot();
+  seatConsoleLink();
+  openSession("sw-l0");
+  Object.assign(S.chat, { current: "s1-05", waiting: true });
+  notifySopOpened();                  // SOP seen, but the pause is still ahead
+  assert.equal(S.chat.seq, 1);
+  assert.equal(S.chat.seq2Pending, true);
+  assert.equal(S.chat.current, "s1-05");
+  assert.equal(maybeSequence2(), false);
+  Object.assign(S.chat, { waiting: false, current: "s1-10", typing: true, pendingAt: 1_000_000 });
+  assert.equal(revealDue(1_000_000), "s1-10");
+  assert.equal(S.chat.current, "s1-11");
+  assert.equal(revealDue(S.chat.pendingAt), "s1-11");
+  assert.equal(S.chat.seq, 2);
+  assert.equal(S.chat.current, "s2-01");
+  assert.equal(S.chat.seq2Pending, false);
 });

@@ -66,6 +66,63 @@ Console sessions do not use the network. They do not require IP. They work when 
 
 If you can reach it with a cable, you can reach it.`,
   }],
+  chat: [
+    { id:"s1-01",  speaker:"rue", text:"you seeing this", delay:12000 },
+    { id:"s1-02",  speaker:"sys", delay:0, choices:[
+      { label:"Everything's red. Syslog is going crazy.", next:"s1-03a" },
+      { label:"Yeah. Whole board.", next:"s1-03b" },
+    ] },
+    { id:"s1-03a", speaker:"rue", text:"ok\ndon't touch anything yet", delay:8000 },
+    { id:"s1-03b", speaker:"rue", text:"ok\ndon't touch anything yet", delay:8000 },
+    { id:"s1-04",  speaker:"rue", text:"what do you have", delay:9000 },
+    { id:"s1-05",  speaker:"sys", delay:0, choices:[
+      { label:"L0 gone. L1, L2, L3 all down. Ping fails everywhere.", next:"s1-06a" },
+      { label:"I don't know. It all went at once.", next:"s1-06b" },
+    ] },
+    { id:"s1-06a", speaker:"rue", text:"ping the L1 gateway. if that fails it's not the network it's the room", delay:14000 },
+    { id:"s1-06b", speaker:"rue", text:"ping the L1 gateway. if that fails it's not the network it's the room", delay:14000 },
+    { id:"s1-07",  speaker:"sys", delay:0, choices:[
+      { label:"Fails.", next:"s1-08" },
+      { label:"Fails. I'm isolated.", next:"s1-08" },
+    ] },
+    { id:"s1-08",  speaker:"rue", text:"ok\nping anything. anything at all", delay:7000 },
+    { id:"s1-09",  speaker:"sys", delay:0, choices:[
+      { label:"No.", next:"s1-10" },
+    ] },
+    { id:"s1-10",  speaker:"rue", text:"storm didn't do that\na storm doesn't take L0 and L3 in the same second", delay:11000 },
+    { id:"s1-11",  speaker:"rue", text:"sorry. something here\nI'm coming to you. sit tight. don't reboot anything", delay:52000, away:true },
+    { id:"s1-12",  speaker:"rue", delay:0, away:true },
+    { id:"s2-01",  speaker:"rue", text:"I'm not coming", delay:4000 },
+    { id:"s2-02",  speaker:"sys", delay:0, choices:[
+      { label:"What? Why?", next:"s2-03" },
+      { label:"What happened?", next:"s2-03" },
+    ] },
+    { id:"s2-03",  speaker:"rue", text:"bridge is gone. the one on the access road\npolice. fire. everyone's out here in the rain\nI'm stuck on this side. not getting to you", delay:15000 },
+    { id:"s2-04",  speaker:"sys", delay:0, choices:[
+      { label:"Are you okay?", next:"s2-05" },
+      { label:"How long?", next:"s2-05" },
+    ] },
+    { id:"s2-05",  speaker:"rue", text:"fine. not hurt. wet\ncould be hours. could be morning\nyou're on your own tonight. I'll be on the phone when I can. sometimes I won't. don't wait on me", delay:10000 },
+    { id:"s2-06",  speaker:"rue", text:"start with L0. it went down first", delay:6000 },
+    { id:"s2-07",  speaker:"rue", text:"you're in SW-L0?", delay:5000 },
+    { id:"s2-08",  speaker:"sys", delay:0, choices:[
+      { label:"I'm in.", next:"s2-09" },
+      { label:"Console's up.", next:"s2-09" },
+    ] },
+    { id:"s2-09",  speaker:"rue", text:"good\nshow me interfaces", delay:8000 },
+    { id:"s2-10",  speaker:"sys", delay:0, choices:[
+      { label:"Most ports down. One up.", next:"s2-11" },
+      { label:"One live port.", next:"s2-11" },
+    ] },
+    { id:"s2-11",  speaker:"rue", text:"that's your floor. one cable still working\nget L0 back. then we'll talk about the rest\nI'll check in. not every minute. don't wait on me", delay:6000 },
+    { id:"s2-12",  speaker:"rue", text:"copy that L0 line into Notepad. the one with the time\nhabit. that's all", delay:4000 },
+    { id:"s2-13",  speaker:"sys", delay:0, choices:[
+      { label:"Done.", next:"s2-14" },
+      { label:"Copied.", next:"s2-14" },
+    ] },
+    { id:"s2-14",  speaker:"rue", text:"good\ngo", delay:5000 },
+    { id:"s2-15",  speaker:"rue", delay:0, away:true },
+  ],
 };
 
 export function bootAct0() {
@@ -76,6 +133,7 @@ export function bootAct0() {
   S.sessions = {};
   S.consoleLinks = {};
   S.cascadeDone = false;
+  beginChat();
 }
 
 // Slot order is the story: slot 12 is an anomaly whose timestamp predates
@@ -115,6 +173,99 @@ export function cascade() {
   return { appended: 24 };
 }
 
+// ---------------- Act 0 chat: Rue's two sequences ----------------
+const CHAT_SEED = () => ({
+  seq: 1, current: "s1-01", shown: [], pendingAt: 0,
+  typing: false, away: false, waiting: false, sopSeen: false, seq2Pending: false,
+});
+
+const beat = id => ACT0.chat.find(b => b.id === id) || null;
+
+function schedule(c, id) {
+  const b = beat(id);
+  c.current = id;
+  c.pendingAt = Date.now() + (b ? b.delay : 0);
+  // Rue types before any line lands, including the long pause message.
+  c.typing = !!b && b.speaker === "rue" && !!b.text;
+}
+
+export function beginChat() {
+  S.chat = CHAT_SEED();
+  schedule(S.chat, "s1-01");
+  return S.chat;
+}
+
+function nextBeat(id) {
+  const seq = id.slice(0, 2), num = parseInt(id.slice(3), 10);
+  let best = null, bestNum = Infinity;
+  for (const b of ACT0.chat) {
+    if (!b.id.startsWith(seq + "-")) continue;
+    const bn = parseInt(b.id.slice(3), 10);
+    if (bn > num && bn < bestNum) { best = b; bestNum = bn; }
+  }
+  return best ? best.id : null;
+}
+
+export function revealDue(now = Date.now()) {
+  const c = S.chat;
+  if (!c || c.waiting || !c.pendingAt) return null;
+  const b = beat(c.current);
+  if (!b) return null;
+  // the pause: five seconds of typing, then Rue is gone
+  if (b.id === "s1-11" && c.typing && now - (c.pendingAt - b.delay) >= 5000) {
+    c.typing = false;
+    c.away = true;
+  }
+  if (now < c.pendingAt) return null;
+  c.typing = false;
+  if (b.text) c.shown.push({ speaker: b.speaker, text: b.text });
+  if (b.choices) { c.waiting = true; return b.id; }
+  if (b.away) {
+    c.away = true;
+    if (b.id === "s1-11") c.current = "s1-12";   // the away marker takes over
+    c.pendingAt = Infinity;
+    if (b.id === "s1-11" && c.seq2Pending) maybeSequence2();
+    return b.id;
+  }
+  const nx = nextBeat(b.id);
+  if (nx) schedule(c, nx); else c.pendingAt = Infinity;
+  return b.id;
+}
+
+export function choose(index) {
+  const c = S.chat;
+  if (!c || !c.waiting) return null;
+  const b = beat(c.current);
+  const pick = b && b.choices && b.choices[index];
+  if (!pick) return null;
+  c.shown.push({ speaker: "player", text: pick.label });
+  const from = c.current;
+  c.waiting = false;
+  c.away = false;
+  schedule(c, pick.next);
+  return from === "s1-02" ? { cascadeIn: 8000 } : null;
+}
+
+export function maybeSequence2() {
+  const c = S.chat, sess = S.sessions["sw-l0"];
+  if (!c || c.seq !== 1 || !c.sopSeen || !sess || sess.state !== "connected") return false;
+  if (c.current !== "s1-12") { c.seq2Pending = true; return false; }
+  c.seq2Pending = false;
+  c.seq = 2;
+  c.waiting = false;
+  c.away = false;
+  schedule(c, "s2-01");
+  return true;
+}
+
+export function notifySopOpened() {
+  const c = S.chat;
+  if (!c) return false;
+  const first = !c.sopSeen;
+  c.sopSeen = true;
+  return maybeSequence2() || first;
+}
+
 const consulting = () => S.sessions["sw-l0"] && S.sessions["sw-l0"].state === "connected";
 
 export function visibleNodes() {
@@ -149,6 +300,7 @@ export function openSession(target) {
       awarded = true;
     }
   }
+  maybeSequence2();
   return { lines: [`opening console to ${target}...`, `connected to ${link.to}`], state: "connected", awarded };
 }
 

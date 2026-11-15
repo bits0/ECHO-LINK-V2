@@ -1,5 +1,6 @@
 // SOP — read-only procedure pages with a title/body search.
-import { S } from "./state.js";
+import { S, save } from "./state.js";
+import { notifySopOpened } from "./act0.js";
 
 export function openSop(body) {
   const wrap = document.createElement("div");
@@ -36,6 +37,7 @@ export function openSop(body) {
       page.append(title, text);
       list.append(page);
     }
+    if (pages.some(p => p.id === "console-access") && notifySopOpened()) save();
   }
   input.oninput = draw;
   draw();
