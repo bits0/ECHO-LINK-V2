@@ -50,6 +50,7 @@ export function focusDevice(id) { if (liveFeed) liveFeed.focusDevice(id); }
 export function mountSyslogFeed(root, opts = {}) {
   const onSource = opts.onSource || (() => {});
   let chip = "ALL", device = null, frozen = false, newCount = 0, lastLen = S.logs.length, stick = true;
+  let lastTop = 0;
 
   root.innerHTML = `
     <div class="nf-head">
@@ -138,13 +139,20 @@ export function mountSyslogFeed(root, opts = {}) {
     drawCounts(shown);
     list.replaceChildren(...shown.map(cardFor));
     scroller.scrollTop = stick && !frozen ? scroller.scrollHeight : keepTop;
+    lastTop = scroller.scrollTop;
   }
 
   function tick() {
+    // measure the player's position first: the scroll event may not have fired yet
+    if (Math.abs(scroller.scrollTop - lastTop) > 2)
+      stick = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) <= 40;
     for (const card of list.querySelectorAll(".sys-card.is-new")) {
       if (Date.now() - Number(card.dataset.arrivedAt) >= 400) card.classList.remove("is-new");
     }
-    if (stick && !frozen) scroller.scrollTop = scroller.scrollHeight;
+    if (stick && !frozen) {
+      scroller.scrollTop = scroller.scrollHeight;
+      lastTop = scroller.scrollTop;
+    }
     if (S.logs.length === lastLen) return;
     if (!stick || frozen) {
       newCount += S.logs.length - lastLen;
@@ -162,6 +170,7 @@ export function mountSyslogFeed(root, opts = {}) {
     freezeBtn.classList.remove("on");
     newPill.classList.add("hidden");
     scroller.scrollTop = scroller.scrollHeight;
+    lastTop = scroller.scrollTop;
   }
 
   freezeBtn.onclick = () => {
@@ -178,6 +187,7 @@ export function mountSyslogFeed(root, opts = {}) {
     newCount = 0;
     newPill.classList.add("hidden");
     scroller.scrollTop = scroller.scrollHeight;
+    lastTop = scroller.scrollTop;
   };
 
   root.querySelector(".nf-chips").addEventListener("click", e => {

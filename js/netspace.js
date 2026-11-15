@@ -1633,6 +1633,11 @@ export function openNetspace(c) {
   const cardPhys = ov.querySelector("#nsc-physical"), cardLast = ov.querySelector("#nsc-last");
   let cardSig = "";
   const cardOpen = () => nsMode === "virtual" && !!act0Selected;
+  function hideCard() {
+    act0Selected = null;
+    cardSig = "";
+    if (card) card.classList.add("hidden");
+  }
   function syncCard() {
     if (!card) return;
     const open = cardOpen();
@@ -1662,8 +1667,10 @@ export function openNetspace(c) {
     ov.querySelector("#nsc-close").onclick = closeCard;
     ov.querySelector("#nsc-show").onclick = () => {
       if (!act0Selected) return;
+      const id = act0Selected;
+      hideCard();
       setMode("syslog");
-      if (feed) feed.focusDevice(act0Selected);
+      if (feed) feed.focusDevice(id);
     };
   }
   // Escape closes the card first; with the card closed it still leaves the view
@@ -1773,6 +1780,7 @@ export function openNetspace(c) {
   });
   function setMode(m) {
     nsMode = m;
+    if (m !== "virtual") hideCard();
     hoveredLink = null;
     hoveredPlan = null;
     mVirtual.classList.toggle("on", m === "virtual");
@@ -1805,7 +1813,7 @@ export function openNetspace(c) {
   setFacZoom(1);
   setMode(nsMode);
 
-  active={raf:requestAnimationFrame(draw),ro,canvas,feed,onEscape};
+  active={raf:requestAnimationFrame(draw),ro,canvas,feed,onEscape,resetCard:hideCard};
   markOpen("netspace", true);
   markActive("netspace");
 }
@@ -1816,6 +1824,7 @@ export function closeNetspace(resetHook=true) {
     cancelAnimationFrame(active.raf); active.ro.disconnect();
     if (active.feed) active.feed.destroy();
     if (active.onEscape) document.removeEventListener("keydown", active.onEscape);
+    if (active.resetCard) active.resetCard();
     active=null;
   }
   if (ctx && resetHook) ctx.netspaceAnimate=null;
