@@ -36,6 +36,35 @@ export const ACT0 = {
     n("CAM-03",          "L0", "IP camera",                 "hidden","session"),
     n("CAM-04",          "L0", "IP camera",                 "hidden","session"),
   ],
+  // Physical connections between codenames. A link is drawn only in the view
+  // of a layer it touches; an off-layer end becomes a labelled stub.
+  links: [
+    ["L1-RTR-LOC01", "L1-SW-DIST01"], ["L1-SW-DIST01", "L1-SRV-SYSLOG01"],
+    ["L1-SW-DIST01", "L1-CON-SRV01"], ["L1-SW-DIST01", "L1-WS-NOC01"],
+    ["L1-SW-DIST01", "L1-UPS-PWR01"],
+    ["L2-SW-ACC01", "L1-SW-DIST01"], ["L2-SW-ACC02", "L1-SW-DIST01"],
+    ["L3-SW-CORE01", "L2-SW-ACC01"], ["L3-SW-CORE01", "L2-SW-ACC02"],
+    ["L3-SW-CORE01", "L3-SRV-ARCH01"], ["L3-SW-CORE01", "L3-SAN-01"],
+    ["L0-SW-ACC01", "L0-RTR-EDGE01"], ["L0-SW-ACC01", "L0-NVR-01"],
+    ["L0-SW-ACC01", "L0-ACS-01"], ["L0-SW-ACC01", "L0-WS-HR01"],
+    ["L0-SW-ACC01", "L0-WS-FIN01"],
+    ["L0-SW-ACC01", "CAM-01"], ["L0-SW-ACC01", "CAM-02"],
+    ["L0-SW-ACC01", "CAM-03"], ["L0-SW-ACC01", "CAM-04"],
+  ],
+  // Normalised 0..1 positions inside each layer's own frame.
+  layout: {
+    "L1-RTR-LOC01":    { x: .50, y: .12 }, "L1-SW-DIST01":    { x: .50, y: .50 },
+    "L1-SRV-SYSLOG01": { x: .17, y: .30 }, "L1-CON-SRV01":    { x: .17, y: .72 },
+    "L1-WS-NOC01":     { x: .83, y: .30 }, "L1-UPS-PWR01":    { x: .83, y: .72 },
+    "L2-SW-ACC01":     { x: .33, y: .50 }, "L2-SW-ACC02":     { x: .67, y: .50 },
+    "L3-SW-CORE01":    { x: .35, y: .48 }, "L3-SRV-ARCH01":   { x: .74, y: .24 },
+    "L3-SAN-01":       { x: .74, y: .72 },
+    "L0-SW-ACC01":     { x: .44, y: .42 }, "L0-RTR-EDGE01":   { x: .44, y: .10 },
+    "L0-NVR-01":       { x: .18, y: .26 }, "L0-ACS-01":       { x: .18, y: .56 },
+    "L0-WS-HR01":      { x: .72, y: .26 }, "L0-WS-FIN01":     { x: .72, y: .56 },
+    "CAM-01":          { x: .18, y: .86 }, "CAM-02":          { x: .39, y: .86 },
+    "CAM-03":          { x: .61, y: .86 }, "CAM-04":          { x: .82, y: .86 },
+  },
   calmLogs: [
     { ts:"02:12:38.204", device:"L1-UPS-PWR01",    message:"battery self-test ok", sev:"INFO", payload:{ device:"L1-UPS-PWR01", layer:"L1" } },
     { ts:"02:12:44.517", device:"L1-SRV-SYSLOG01", message:"heartbeat ok", sev:"INFO", payload:{ device:"L1-SRV-SYSLOG01", layer:"L1" } },

@@ -524,18 +524,23 @@ test("Act 0 cascade — the wave arrives card by card", async () => {
     const at500 = await snap(page);
     await page.waitForTimeout(1000);
     const at1500 = await snap(page);
-    await page.waitForTimeout(1500);
-    const at3000 = await snap(page);
-    console.log(`cascade samples: 0.5s=${at500.cards} 1.5s=${at1500.cards} 3.0s=${at3000.cards}`);
+    const tFull = Date.now();
+    await page.waitForFunction(() => document.querySelectorAll(".sys-card").length === 36,
+      null, { timeout: 20000 });
+    const arriveMs = Date.now() - tFull;
+    const atFull = await snap(page);
+    console.log(`cascade samples: 0.5s=${at500.cards} 1.5s=${at1500.cards}; full wave after ${arriveMs}ms`);
 
     assert.ok(at500.cards > 12 && at500.cards < 24, `(w) the feed grows in steps (0.5s: ${at500.cards})`);
     assert.ok(at500.fresh > 0, "arriving cards carry .is-new");
     assert.ok(at1500.cards > at500.cards && at1500.cards < 36, `(w) still climbing at 1.5s (${at1500.cards})`);
     assert.equal(at1500.header[0] + at1500.header[1] + at1500.header[2], at1500.cards, "header counts follow the feed");
     assert.ok(at1500.header[2] > 0 && at1500.header[0] >= 12, "the counters tick up mid-stream");
-    assert.equal(at3000.cards, 36, "the whole block landed");
-    assert.deepEqual(at3000.header, [14, 6, 16], "final counts are the feed's own tally");
-    assert.equal(at3000.fresh, 0, "no stale arrival class after the wave");
+    assert.equal(atFull.cards, 36, "the whole block landed");
+    assert.deepEqual(atFull.header, [14, 6, 16], "final counts are the feed's own tally");
+    await page.waitForFunction(() => document.querySelectorAll(".sys-card.is-new").length === 0,
+      null, { timeout: 2000 });
+    assert.equal((await snap(page)).fresh, 0, "the arrival class ages out");
     assert.equal(await page.locator(".sys-card").last().locator(".sc-ts").textContent(), "02:14:00.047", "newest card at the tail");
 
     // the anomaly still wears exactly a CRIT card's class list
@@ -682,7 +687,7 @@ test("syslog — scrollback holds, and the wave keeps its own pace", async () =>
   }
 });
 
-test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
+test("Act 0 board — one graph per layer, a device card, and the rack", async () => {
   const server = await startServer();
   const url = `http://127.0.0.1:${server.address().port}/index.html`;
   let browser;
@@ -710,9 +715,27 @@ test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
       await clickAt(b.x + b.w/2, b.y + b.h/2);
       await page.waitForTimeout(120);
     };
+    const pickLayer = async (l, count) => {
+      await page.click(`.ns-layer[data-layer="${l}"]`);
+      await page.waitForFunction(n =>
+        Object.keys(JSON.parse(document.querySelector("#netspace-canvas").dataset.act0Boxes)).length === n, count);
+      return { boxes: await data("act0Boxes"), links: await data("act0Links") };
+    };
+    const boxIds = boxes => Object.keys(boxes);
     await page.waitForFunction(() => !!document.querySelector("#netspace-canvas").dataset.act0Boxes);
 
-    // (a) kinds are derived for every node, and several kinds are in play
+    // (a) the board opens on L1: its own six nodes, laid out as a spine
+    assert.equal(await page.evaluate(() => document.querySelector("#netspace-canvas").dataset.act0Layer), "L1", "(a) L1 is the default layer");
+    assert.equal(await page.locator('.ns-layer[data-layer="L1"]').getAttribute("aria-pressed"), "true", "(a) L1 is pressed");
+    assert.equal(await page.locator('.ns-layer[data-layer="L0"]').isDisabled(), true, "(a) L0 is disabled before a session");
+    const l1 = await data("act0Boxes");
+    assert.equal(boxIds(l1).length, 6, "(a) L1 has its six nodes");
+    const l1Links = await data("act0Links");
+    assert.equal(l1Links.length, 5, "(a) five cables inside L1");
+    assert.equal(l1Links.every(l => !l.external), true, "(a) every L1 cable stays inside the layer");
+    assert.ok(l1["L1-RTR-LOC01"].y < l1["L1-SW-DIST01"].y, "(a) positions come from the layer layout, not a row");
+
+    // kinds are derived for every node, and several kinds are in play
     const kinds = await data("act0Kinds");
     const distinct = [...new Set(Object.values(kinds))];
     assert.equal(Object.keys(kinds).length, 21, "(a) kinds cover all 21 nodes");
@@ -724,6 +747,33 @@ test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
       new Set(distinct), "(a) no kind invented outside the mapping");
     const nodes = await page.evaluate(() => import("/js/state.js").then(m => m.S.nodes.length));
     assert.equal(nodes, 21, "NEGATIVE — the roster is untouched");
+
+    // (b) L2 is its own graph: two access switches and their two links
+    const l2 = await pickLayer("L2", 2);
+    assert.equal(boxIds(l2.boxes).length, 2, "(b) L2 has two nodes");
+    assert.equal(l2.links.length, 2, "(b) L2 shows exactly its two links");
+    assert.deepEqual(l2.links.map(l => l.external), [true, true], "(b) both far ends live on L1, so both are stubs");
+    assert.equal(boxIds(l2.boxes).every(id => id.startsWith("L2-")), true, "(b) no L1 nodes leak into the view");
+
+    // (c) L3: core, archive and SAN cable together; the uplinks become stubs
+    const l3 = await pickLayer("L3", 3);
+    assert.equal(boxIds(l3.boxes).length, 3, "(c) L3 has three nodes");
+    assert.equal(l3.links.length, 4, "(c) four links touch L3");
+    assert.equal(l3.links.filter(l => l.external).length, 2, "(c) two are off-layer stubs");
+
+    // (e) every visible node appears in exactly one layer view
+    const boot = [...new Set([...boxIds(l1), ...boxIds(l2.boxes), ...boxIds(l3.boxes)])];
+    assert.equal(boot.length, 11, "(e) L1+L2+L3 hold the eleven boot nodes");
+    assert.equal(boot.length, boxIds(l1).length + boxIds(l2.boxes).length + boxIds(l3.boxes).length, "(e) no node appears twice");
+
+    // (f) a node in L2 opens the same card, and a layer change closes it
+    await pickLayer("L2", 2);
+    await clickNode("L2-SW-ACC01");
+    assert.equal(await page.locator("#ns-card.hidden").count(), 0, "(f) the L2 node opens a card");
+    assert.equal(await txt(page.locator("#nsc-name")), "L2-SW-ACC01", "(f) the card names the L2 node");
+    await page.click('.ns-layer[data-layer="L3"]');
+    assert.equal(await page.locator("#ns-card.hidden").count(), 1, "NEGATIVE — switching layers closes the card");
+    await pickLayer("L1", 6);
 
     // the cascade lands; the board's state dots and the card read the same data
     await page.evaluate(() => import("/js/act0.js").then(m => m.cascade()));
@@ -739,6 +789,7 @@ test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
     assert.equal(await txt(page.locator("#nsc-physical")), "distribution switch");
     assert.match(await txt(page.locator("#nsc-last")), /^02:14:00\.033 · stp topology change$/, "(b) LAST EVENT is its own newest entry");
     // the same mechanism yields each device's own newest line (ordered, not sorted)
+    await pickLayer("L3", 3);
     await clickNode("L3-SW-CORE01");
     assert.equal(await txt(page.locator("#nsc-name")), "L3-SW-CORE01", "another node replaces the card");
     assert.equal(await txt(page.locator("#nsc-last")), "02:14:00.038 · stp topology change");
@@ -761,6 +812,7 @@ test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
     assert.equal(await page.evaluate(() => !!document.querySelector("#netspace-canvas").dataset.act0Boxes), true);
 
     // (c) SHOW IN FEED switches to SYSLOG filtered to that device
+    await pickLayer("L1", 6);
     await clickNode("L1-SW-DIST01");
     await page.click("#nsc-show");
     assert.equal(await page.locator("#ns-mode-syslog.on").count(), 1, "(c) SHOW IN FEED opens SYSLOG");
@@ -795,6 +847,28 @@ test("Act 0 board — kinds, bands, a device card, and the rack", async () => {
     assert.equal(await txt(page.locator("#toast")), "console lead is seated", "(e) the lead is drawn and answers the single-use toast");
     await clickAt(bench.right.x + bench.right.w/2, bench.right.y + bench.right.h/2);
     assert.equal(await seatedLogs(), 1, "(e) the lead cannot be seated twice");
+
+    // (d) L0 stays shut until a console session opens it; then it is its own graph
+    assert.equal(await page.locator('.ns-layer[data-layer="L0"]').isDisabled(), true, "(d) L0 is still disabled before the session");
+    await page.click("#dock-terminal");
+    await page.waitForSelector(".term-input");
+    await page.fill(".term-input", "session open sw-l0");
+    await page.press(".term-input", "Enter");
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll(".t-line")].some(l => l.textContent.includes("connected to SW-L0")));
+    await page.click("#win-terminal .wb-close");
+    await page.waitForSelector("#win-terminal", { state: "detached" });
+    await page.click("#ns-mode-virtual");
+    await page.waitForFunction(() => {
+      const b = document.querySelector('.ns-layer[data-layer="L0"]');
+      return b && !b.disabled;
+    });
+    const l0 = await pickLayer("L0", 10);
+    assert.equal(boxIds(l0.boxes).length, 10, "(d) L0 has its ten nodes");
+    assert.equal(l0.links.length, 9, "(d) nine links inside L0");
+    assert.equal(l0.links.every(l => !l.external), true, "(d) every L0 link is internal");
+    const all = [...new Set([...boot, ...boxIds(l0.boxes)])];
+    assert.equal(all.length, 21, "(e) with L0 live the views cover all 21 nodes");
 
     assert.deepEqual(problems, [], "page errors:\n" + problems.join("\n"));
   } finally {

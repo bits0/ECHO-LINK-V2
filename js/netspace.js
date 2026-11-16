@@ -9,7 +9,7 @@ import { activeScenario, PREVIEW_FLOORS, FACILITY } from "./scenario.js";
 import { netspaceView, tracePC, traceSRV, cableAt, runContinuity, switchUp, routerUp } from "./net.js";
 import { openDevice, openOutlet, openPatchPanel } from "./device.js";
 import { nodeIconImage } from "./icons.js";
-import { seatConsoleLink, visibleNodes, nodeState } from "./act0.js";
+import { ACT0, seatConsoleLink, visibleNodes, nodeState } from "./act0.js";
 import { mountSyslogFeed } from "./syslog.js";
 import { markOpen, markActive } from "./shell.js";
 
@@ -759,6 +759,7 @@ function drawFacilityBuilding(g, W, H, canvas) {
 const ACT0_STATE_COL = { green:"#79c98d", red:"#c2554d" };
 const ACT0_LAYER_LABEL = { L1:"L1 — OPERATIONS", L2:"L2 — LABS", L3:"L3 — CORE", L0:"L0 — SURFACE" };
 let act0Hover = null;
+let act0Layer = "L1";              // the layer whose own graph is on the board
 let act0PortSel = null;
 let act0Pulse = null;              // node id ringed after a source click
 let act0PulseUntil = 0;            // the ring fades out by this time
@@ -774,28 +775,63 @@ function kindOf(id) {
   return id.startsWith("CAM-") ? "camera" : "generic";
 }
 
-// One layout feeds the drawing and the hit-test, so they cannot disagree.
+// One layer at a time: each view is its own graph, laid out from ACT0.layout.
+// The same layout feeds drawing, hit-test and the probe datasets.
 function act0BoardLayout(W, H) {
-  const rows = ["L1", "L2", "L3"];
-  const conn = S.sessions["sw-l0"] && S.sessions["sw-l0"].state === "connected";
-  if (conn) rows.push("L0");
-  const vis = visibleNodes();
-  const x0 = 136, x1 = W - 136, y0 = 150, y1 = H - 210;
-  const rowH = (y1 - y0) / rows.length;
-  return rows.map((layer, i) => {
-    const items = vis.filter(node => node.layer === layer);
-    const gap = 14, bh = 54;
-    const bw = Math.min(158, (x1 - x0 - gap*(items.length-1)) / Math.max(1, items.length));
-    let x = x0 + (x1 - x0 - (items.length*bw + gap*(items.length-1)))/2;
-    const bandY = y0 + rowH*i, ruleY = bandY + 22;
-    const cy = ruleY + Math.max(bh/2 + 6, (rowH - 22)/2);
-    const boxes = items.map(node => {
-      const b = { node, x, y: cy - bh/2, w: bw, h: bh };
-      x += bw + gap;
-      return b;
-    });
-    return { layer, label: ACT0_LAYER_LABEL[layer], bandY, ruleY, boxes };
+  const frame = { x: 136, y: 150, w: W - 272, h: H - 350 };
+  const padX = 112, padY = 58, bw = 150, bh = 52;
+  const nodes = visibleNodes().filter(node => node.layer === act0Layer);
+  const boxes = nodes.map(node => {
+    const p = ACT0.layout[node.id] || { x: .5, y: .5 };
+    return {
+      node,
+      x: Math.round(frame.x + padX + p.x*(frame.w - padX*2) - bw/2),
+      y: Math.round(frame.y + padY + p.y*(frame.h - padY*2) - bh/2),
+      w: bw, h: bh,
+    };
   });
+  const byId = new Map(boxes.map(b => [b.node.id, b]));
+  const layerOf = new Map(S.nodes.map(node => [node.id, node.layer]));
+  // A link belongs to the view of its first codename's layer; the far end,
+  // when it lives elsewhere, is what becomes the labelled stub.
+  const links = ACT0.links
+    .filter(([a]) => layerOf.get(a) === act0Layer)
+    .map(([a, b]) => {
+      const external = layerOf.get(b) !== act0Layer;
+      return { a, b, external, box: byId.get(a), far: external ? b : null, farLayer: external ? layerOf.get(b) : null };
+    });
+  return { layer: act0Layer, frame, boxes, links };
+}
+
+// Edge-to-edge orthogonal route; bends are rounded to 8px when stroked.
+function act0CablePath(A, B) {
+  const ax = A.x + A.w/2, ay = A.y + A.h/2, bx = B.x + B.w/2, by = B.y + B.h/2;
+  if (Math.abs(bx - ax) < 2 || Math.abs(by - ay) < 2)
+    return [{ x: ax, y: ay }, { x: bx, y: by }];
+  if (Math.abs(bx - ax) >= Math.abs(by - ay)) {
+    const sx = bx > ax ? A.x + A.w : A.x, tx = bx > ax ? B.x : B.x + B.w;
+    const mx = Math.round((sx + tx)/2);
+    return [{ x: sx, y: ay }, { x: mx, y: ay }, { x: mx, y: by }, { x: tx, y: by }];
+  }
+  const sy = by > ay ? A.y + A.h : A.y, ty = by > ay ? B.y : B.y + B.h;
+  const my = Math.round((sy + ty)/2);
+  return [{ x: ax, y: sy }, { x: ax, y: my }, { x: bx, y: my }, { x: bx, y: ty }];
+}
+
+function strokeAct0Path(g, pts) {
+  g.beginPath();
+  g.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p0 = pts[i-1], p1 = pts[i], p2 = pts[i+1];
+    const d0 = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
+    const d2 = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+    const r = Math.min(8, d0/2, d2/2);
+    g.lineTo(p1.x - (p1.x - p0.x)/d0*r, p1.y - (p1.y - p0.y)/d0*r);
+    g.quadraticCurveTo(p1.x, p1.y, p1.x + (p2.x - p1.x)/d2*r, p1.y + (p2.y - p1.y)/d2*r);
+  }
+  const last = pts[pts.length - 1];
+  g.lineTo(last.x, last.y);
+  g.stroke();
 }
 
 // 26x26 glyph box, drawn from primitives so every kind shares one weight.
@@ -867,9 +903,8 @@ function drawKindGlyph(g, kind, ox, oy) {
 }
 
 function act0BoardHit(mx, my, W, H) {
-  for (const row of act0BoardLayout(W, H))
-    for (const b of row.boxes)
-      if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) return b;
+  for (const b of act0BoardLayout(W, H).boxes)
+    if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) return b;
   return null;
 }
 
@@ -877,45 +912,82 @@ function drawAct0Board(canvas) {
   const g = canvas.getContext("2d");
   const W = canvas.clientWidth, H = canvas.clientHeight;
   canvas.dataset.act0Kinds = JSON.stringify(Object.fromEntries(S.nodes.map(node => [node.id, kindOf(node.id)])));
+  canvas.dataset.act0Layer = act0Layer;
   if (act0Pulse && performance.now() >= act0PulseUntil) {
     act0Pulse = null;
     delete canvas.dataset.act0Pulse;
   }
   g.save();
   g.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  const L = act0BoardLayout(W, H);
+  canvas.dataset.act0Boxes = JSON.stringify(Object.fromEntries(
+    L.boxes.map(b => [b.node.id, { x: b.x, y: b.y, w: b.w, h: b.h }])));
+  canvas.dataset.act0Links = JSON.stringify(L.links.map(({ a, b, external }) => ({ a, b, external })));
+
   g.fillStyle = "rgba(9,12,16,.5)";
   g.strokeStyle = "rgba(58,66,80,.9)";
   g.lineWidth = 1;
-  g.beginPath(); g.roundRect(120, 118, W - 240, H - 300, 10); g.fill(); g.stroke();
+  g.beginPath(); g.roundRect(L.frame.x, L.frame.y, L.frame.w, L.frame.h, 10); g.fill(); g.stroke();
   g.textBaseline = "middle";
-  const layout = act0BoardLayout(W, H);
-  canvas.dataset.act0Boxes = JSON.stringify(Object.fromEntries(
-    layout.flatMap(row => row.boxes).map(b =>
-      [b.node.id, { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) }])));
-  for (const row of layout) {
-    g.font = "9px ui-monospace, monospace";
-    g.textAlign = "left";
-    g.fillStyle = "#5b6472";
-    g.fillText(row.label, 136, row.bandY + 12);
-    g.strokeStyle = "rgba(58,66,80,.65)"; g.lineWidth = 1;
-    g.beginPath(); g.moveTo(136, row.ruleY); g.lineTo(W - 136, row.ruleY); g.stroke();
-    for (const b of row.boxes) {
-      const on = b.node.id === act0Hover;
-      g.fillStyle = "rgba(18,21,27,.9)";
-      g.strokeStyle = on ? "#e8ebef" : "rgba(58,66,80,1)";
-      g.lineWidth = on ? 1.6 : 1;
-      g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill(); g.stroke();
-      drawKindGlyph(g, kindOf(b.node.id), b.x + 9, b.y + (b.h - 26)/2);
-      g.font = "9.5px ui-monospace, monospace";
-      g.textAlign = "center";
-      g.fillStyle = "#b6bfca";
-      g.fillText(b.node.id, b.x + (b.w + 17)/2, b.y + b.h/2);
-      g.fillStyle = ACT0_STATE_COL[nodeState(b.node)] || "#5b6472";
-      g.beginPath(); g.arc(b.x + b.w - 13, b.y + b.h/2, 3, 0, 7); g.fill();
+  g.font = "9px ui-monospace, monospace";
+  g.textAlign = "left";
+  g.fillStyle = "#5b6472";
+  g.fillText(ACT0_LAYER_LABEL[act0Layer] || act0Layer, L.frame.x + 18, L.frame.y + 18);
+
+  const boxById = new Map(L.boxes.map(b => [b.node.id, b]));
+  const nodeById = new Map(S.nodes.map(node => [node.id, node]));
+  const red = id => nodeState(nodeById.get(id)) === "red";
+
+  // Off-layer links become short dashed stubs to the frame edge, never cables.
+  const stubCount = new Map();
+  for (const link of L.links) {
+    if (!link.external) continue;
+    const id = link.box.node.id;
+    stubCount.set(id, (stubCount.get(id) || 0) + 1);
+  }
+  const stubSeen = new Map();
+  for (const link of L.links) {
+    const hot = link.a === act0Hover || link.b === act0Hover;
+    const bad = red(link.a) || red(link.b);
+    g.strokeStyle = hot ? "#e0a13e" : bad ? "rgba(194,85,77,.4)" : "#46505d";
+    g.lineWidth = hot ? 1.6 : 1.2;
+    if (link.external) {
+      const id = link.box.node.id;
+      const seen = stubSeen.get(id) || 0;
+      stubSeen.set(id, seen + 1);
+      const x = link.box.x + link.box.w/2 + (seen - (stubCount.get(id) - 1)/2) * 18;
+      const y1 = L.frame.y + L.frame.h - 4;
+      g.setLineDash([4, 4]);
+      g.beginPath(); g.moveTo(x, link.box.y + link.box.h); g.lineTo(x, y1); g.stroke();
+      g.setLineDash([]);
+      g.font = "9px ui-monospace, monospace";
+      g.textAlign = "left";
+      g.fillStyle = "#5b6472";
+      g.fillText(`→ ${link.farLayer}`, x + 5, y1 - 8 - seen*11);
+    } else {
+      g.setLineDash(bad ? [5, 4] : []);
+      strokeAct0Path(g, act0CablePath(boxById.get(link.a), boxById.get(link.b)));
+      g.setLineDash([]);
     }
   }
+
+  for (const b of L.boxes) {
+    const on = b.node.id === act0Hover;
+    g.fillStyle = "rgba(18,21,27,.9)";
+    g.strokeStyle = on ? "#e8ebef" : "rgba(58,66,80,1)";
+    g.lineWidth = on ? 1.6 : 1;
+    g.beginPath(); g.roundRect(b.x, b.y, b.w, b.h, 6); g.fill(); g.stroke();
+    drawKindGlyph(g, kindOf(b.node.id), b.x + 9, b.y + (b.h - 26)/2);
+    g.font = "9.5px ui-monospace, monospace";
+    g.textAlign = "center";
+    g.fillStyle = "#b6bfca";
+    g.fillText(b.node.id, b.x + (b.w + 17)/2, b.y + b.h/2);
+    g.fillStyle = ACT0_STATE_COL[nodeState(b.node)] || "#5b6472";
+    g.beginPath(); g.arc(b.x + b.w - 13, b.y + b.h/2, 3, 0, 7); g.fill();
+  }
+
   if (act0Pulse) {
-    const box = layout.flatMap(r => r.boxes).find(b => b.node.id === act0Pulse);
+    const box = L.boxes.find(b => b.node.id === act0Pulse);
     const left = act0PulseUntil - performance.now();
     if (box && left > 0) {
       const t = 1 - left / 1200;
@@ -1273,6 +1345,7 @@ export function openNetspace(c) {
   facZoom = 1;
   hoveredFacilityFloor = null;
   act0Hover = null;
+  act0Layer = "L1";
   act0PortSel = null;
   act0Pulse = null;
   act0PulseUntil = 0;
@@ -1293,6 +1366,8 @@ export function openNetspace(c) {
         <div class="nsc-last"><span class="k">LAST EVENT</span><div class="v" id="nsc-last"></div></div>
         <div class="nsc-actions"><button class="ns-mode" id="nsc-show">SHOW IN FEED</button><button class="nsc-close" id="nsc-close" aria-label="Close">×</button></div>
       </aside>` : ""}
+      ${S.act0 ? `<div class="ns3d-layers" id="ns-layers">${["L1", "L2", "L3", "L0"].map(l =>
+        `<button class="ns-mode ns-layer" data-layer="${l}" aria-pressed="${l === "L1"}">${l}</button>`).join("")}</div>` : ""}
       <div class="ns3d-head">
         <div id="ns-head-ctx"><span>NETWORK SPACE</span> / <b id="ns-head-seg">F1 — OFFICE</b></div>
         <div class="ns3d-modes">
@@ -1376,7 +1451,7 @@ export function openNetspace(c) {
       if (hoveredLink != null) t2LinkChips(g, hoveredLink, W, H);
     }
 
-    if (S.act0) syncCard();
+    if (S.act0) { syncLayers(); syncCard(); }
 
     let text;
     if (S.act0) {
@@ -1681,6 +1756,29 @@ export function openNetspace(c) {
   };
   document.addEventListener("keydown", onEscape);
 
+  // the layer switcher: each button picks its own graph; L0 only once it is live
+  const layerBar = ov.querySelector("#ns-layers");
+  const layerBtns = layerBar ? [...layerBar.querySelectorAll(".ns-layer")] : [];
+  function syncLayers() {
+    if (!layerBar) return;
+    const l0Live = visibleNodes().some(node => node.layer === "L0");
+    for (const btn of layerBtns) {
+      if (btn.dataset.layer === "L0") btn.disabled = !l0Live;
+      btn.setAttribute("aria-pressed", btn.dataset.layer === act0Layer ? "true" : "false");
+    }
+  }
+  for (const btn of layerBtns) {
+    btn.onclick = () => {
+      if (btn.disabled || btn.dataset.layer === act0Layer) return;
+      act0Layer = btn.dataset.layer;
+      act0Hover = null;
+      hideCard();
+      canvas.dataset.act0Layer = act0Layer;
+      syncLayers();
+    };
+  }
+  syncLayers();
+
   function locateNode(name) {
     if (!visibleNodes().some(node => node.id === name)) {
       ctx.toast("not visible on the board yet", "amber");
@@ -1781,6 +1879,7 @@ export function openNetspace(c) {
   function setMode(m) {
     nsMode = m;
     if (m !== "virtual") hideCard();
+    if (layerBar) layerBar.classList.toggle("hidden", m !== "virtual");
     hoveredLink = null;
     hoveredPlan = null;
     mVirtual.classList.toggle("on", m === "virtual");
